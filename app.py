@@ -212,24 +212,8 @@ def _read_content(path: Path) -> str | None:
 
 
 def _candidate_answer_files(answer_file: Path) -> list[Path]:
-    """Return possible answer files to scan, including session file and all answer*.md."""
-    candidates: list[Path] = [answer_file.resolve(), (CURSOR_CHAT_DIR / "answer.md").resolve()]
-    # Scan local project answer files as fallback.
-    for path in CURSOR_CHAT_DIR.glob("answer*.md"):
-        resolved = path.resolve()
-        if resolved not in candidates:
-            candidates.append(resolved)
-    # If target answer file is outside current project, also scan sibling answer*.md there.
-    parent = answer_file.resolve().parent
-    if parent != CURSOR_CHAT_DIR.resolve():
-        try:
-            for path in parent.glob("answer*.md"):
-                resolved = path.resolve()
-                if resolved not in candidates:
-                    candidates.append(resolved)
-        except OSError:
-            pass
-    return candidates
+    """Return answer file candidates in strict priority order."""
+    return [answer_file.resolve(), (CURSOR_CHAT_DIR / "answer.md").resolve()]
 
 
 def poll_answer(
@@ -237,33 +221,34 @@ def poll_answer(
     timeout_seconds: int = 120,
     interval: float = 1.0,
     status=None,
-    request_started_at: float | None = None,
 ) -> str | None:
     """
     Poll answer file(s) until content exists or timeout.
-    Scans session answer file + answer.md + all answer*.md files.
-    If request_started_at is provided, prefer files updated after this request started.
+    Priority: current session answer file, then answer.md fallback.
     """
     deadline = time.time() + timeout_seconds
     start = time.time()
+    session_file = answer_file.resolve()
+    fallback_file = (CURSOR_CHAT_DIR / "answer.md").resolve()
 
     while time.time() < deadline:
         elapsed = int(time.time() - start)
         if status is not None:
             status.update(label=f"Waiting for answer... ({elapsed}s)", state="running")
 
-        for path in _candidate_answer_files(answer_file):
-            if request_started_at is not None:
-                try:
-                    if path.stat().st_mtime + 0.2 < request_started_at:
-                        continue
-                except OSError:
-                    continue
-            content = _read_content(path)
-            if content:
-                time.sleep(0.8)
-                content2 = _read_content(path)
-                return (content2 if content2 and len(content2) >= len(content) else content) or content
+        # Strictly prefer the session file to avoid stale answers from other sessions.
+        content = _read_content(session_file)
+        if content:
+            time.sleep(0.8)
+            content2 = _read_content(session_file)
+            return (content2 if content2 and len(content2) >= len(content) else content) or content
+
+        # Optional fallback: if writer still uses answer.md.
+        fallback_content = _read_content(fallback_file)
+        if fallback_content:
+            time.sleep(0.8)
+            content2 = _read_content(fallback_file)
+            return (content2 if content2 and len(content2) >= len(fallback_content) else fallback_content) or fallback_content
         time.sleep(interval)
 
     for path in _candidate_answer_files(answer_file):
@@ -322,7 +307,6 @@ if prompt := st.chat_input("Ask anything... (Switch to Cursor IDE when prompted)
     full_prompt = build_prompt(prompt, answer_file)
     response = ""
     with st.chat_message("assistant"):
-        st.caption(f"Listening for answer file: `{answer_file.resolve()}`")
         with st.status("Sending to Cursor...") as status:
             status.update(label="Switch to Cursor IDE now (Alt+Tab)...", state="running")
             time.sleep(2)
@@ -332,7 +316,6 @@ if prompt := st.chat_input("Ask anything... (Switch to Cursor IDE when prompted)
             new_chat = should_new_chat(client_ip, user_wants)
             if user_wants:
                 st.session_state.user_wants_new_chat = False
-            request_started_at = time.time()
             ok, err = trigger_cursor(full_prompt, answer_file, new_chat=new_chat)
             if not ok:
                 status.update(label="Failed", state="error")
@@ -342,7 +325,6 @@ if prompt := st.chat_input("Ask anything... (Switch to Cursor IDE when prompted)
                     answer_file,
                     timeout_seconds=120,
                     status=status,
-                    request_started_at=request_started_at,
                 )
                 if answer:
                     status.update(label="Done!", state="complete")
