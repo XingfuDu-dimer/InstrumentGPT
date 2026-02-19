@@ -259,7 +259,7 @@ if not conv_id:
     safe_ip = html.escape(client_ip)
     st.markdown(
         f'<div class="welcome-card">'
-        f'<p class="greeting">Hello, <span class="ip">{safe_ip}</span></p>'
+        f'<p class="greeting">Hello user, <span class="ip">{safe_ip}</span></p>'
         f'<p class="sub">Ask questions about instruments, logs, and debugging.<br>'
         f'Start a new conversation or pick one from the sidebar.</p>'
         f'</div>',
