@@ -228,39 +228,69 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
+def send_and_poll(question: str, is_retry: bool = False):
+    """Send prompt to Cursor and poll for answer. Stores result in session state."""
+    full_prompt = build_prompt(question)
+    client_ip = get_client_ip()
+    user_wants = st.session_state.get("user_wants_new_chat", False)
+    new_chat = should_new_chat(client_ip, user_wants) and not is_retry
+    if user_wants:
+        st.session_state.user_wants_new_chat = False
+
+    with st.status("Sending to Cursor...") as status:
+        status.update(label="Switch to Cursor IDE now (Alt+Tab)...", state="running")
+        time.sleep(2)
+        status.update(label="Pasting to Cursor...", state="running")
+        ok, err = trigger_cursor(full_prompt, new_chat=new_chat)
+        if not ok:
+            status.update(label="Failed", state="error")
+            return None, client_ip
+        answer = poll_answer(timeout_seconds=600, status=status)
+        if answer:
+            status.update(label="Done!", state="complete")
+        else:
+            status.update(label="Timeout", state="error")
+        return answer, client_ip
+
+
 if prompt := st.chat_input("Ask anything..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
+    st.session_state.pop("pending_retry", None)
 
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    full_prompt = build_prompt(prompt)
-    response = ""
     with st.chat_message("assistant"):
-        with st.status("Sending to Cursor...") as status:
-            status.update(label="Switch to Cursor IDE now (Alt+Tab)...", state="running")
-            time.sleep(2)
-            status.update(label="Pasting to Cursor...", state="running")
-            client_ip = get_client_ip()
-            user_wants = st.session_state.get("user_wants_new_chat", False)
-            new_chat = should_new_chat(client_ip, user_wants)
-            if user_wants:
-                st.session_state.user_wants_new_chat = False
-            ok, err = trigger_cursor(full_prompt, new_chat=new_chat)
-            if not ok:
-                status.update(label="Failed", state="error")
-                response = "_Could not send to Cursor. Ensure Cursor is open and try again._"
+        answer, client_ip = send_and_poll(prompt)
+        if answer:
+            st.markdown(answer)
+            st.session_state.messages.append({"role": "assistant", "content": answer})
+            append_to_history(prompt, answer)
+        else:
+            st.warning("No response within 10 minutes.")
+            st.session_state.pending_retry = prompt
+            st.session_state.messages.append({"role": "assistant", "content": "_No response within 10 minutes._"})
+
+        update_ip_activity(client_ip)
+
+elif st.session_state.get("pending_retry"):
+    retry_prompt = st.session_state.pending_retry
+    if st.button("Retry"):
+        st.session_state.pop("pending_retry")
+        # Remove the timeout message from history
+        if st.session_state.messages and st.session_state.messages[-1]["content"] == "_No response within 10 minutes._":
+            st.session_state.messages.pop()
+
+        clear_answer()
+        with st.chat_message("assistant"):
+            answer, client_ip = send_and_poll(retry_prompt, is_retry=True)
+            if answer:
+                st.markdown(answer)
+                st.session_state.messages.append({"role": "assistant", "content": answer})
+                append_to_history(retry_prompt, answer)
             else:
-                answer = poll_answer(timeout_seconds=120, status=status)
-                if answer:
-                    status.update(label="Done!", state="complete")
-                    response = answer
-                else:
-                    status.update(label="Timeout", state="error")
-                    response = "_No response within 2 minutes._"
+                st.warning("No response within 10 minutes.")
+                st.session_state.pending_retry = retry_prompt
+                st.session_state.messages.append({"role": "assistant", "content": "_No response within 10 minutes._"})
 
-        st.markdown(response)
-
-    st.session_state.messages.append({"role": "assistant", "content": response})
-    append_to_history(prompt, response)
-    update_ip_activity(client_ip)
+            update_ip_activity(client_ip)
