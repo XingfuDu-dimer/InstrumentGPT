@@ -52,6 +52,20 @@ INSTRUMENT_CWD=/home/you/YourProject streamlit run app.py
 
 Then open the URL shown (default `http://localhost:8501`). You can change **Working Directory**, model, mode, and MDC tag in the sidebar **Settings** anytime.
 
+### "Agent not found" in the app (but `agent` works in terminal)
+
+If you already ran `agent login` in a terminal and `agent` works there, the app may not see it because Streamlit was started with a different PATH (e.g. from VS Code or another terminal). Set the **full path** to the agent executable:
+
+1. In a terminal where `agent` works, get its path:
+   - **PowerShell:** `(Get-Command agent).Source`
+   - **CMD:** `where agent`
+2. Before starting Streamlit, set it (same session):
+   - **PowerShell:** `$env:INSTRUMENT_AGENT_PATH = "C:\path\to\agent.exe"`
+   - **Bash:** `export INSTRUMENT_AGENT_PATH=/path/to/agent`
+3. Run `streamlit run app.py` in that same terminal.
+
+The app also looks for `agent.exe` in `%USERPROFILE%\.cursor\bin` and under `%LOCALAPPDATA%` on Windows; if your install is there, it may be found without the env var.
+
 ## Features
 
 - **Streaming responses** — text streams in via `agent -p --output-format stream-json`

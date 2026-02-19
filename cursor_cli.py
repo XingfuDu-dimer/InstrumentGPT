@@ -8,8 +8,12 @@ Stream-json event types (NDJSON, one JSON object per line):
   type=assistant   — text delta  (message.content[].text)
   type=tool_call   — tool started/completed
   type=result      — final summary with duration_ms
+
+To fix "agent not found" when PATH differs (e.g. Streamlit started from IDE):
+  Set INSTRUMENT_AGENT_PATH to the full path to the agent executable.
 """
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -17,10 +21,41 @@ from typing import Generator
 
 
 def _find_agent_cmd() -> str:
+    # Explicit path wins (for when Streamlit's PATH doesn't include agent)
+    explicit = os.environ.get("INSTRUMENT_AGENT_PATH")
+    if explicit:
+        p = Path(explicit)
+        if p.is_file():
+            return str(p.resolve())
+        if p.is_dir():
+            for name in ("agent", "agent.exe", "cursor-agent", "cursor-agent.exe"):
+                candidate = p / name
+                if candidate.is_file():
+                    return str(candidate.resolve())
+
     for cmd in ("agent", "cursor-agent"):
-        if shutil.which(cmd):
-            return cmd
-    return "agent"
+        found = shutil.which(cmd)
+        if found:
+            return found
+
+    # Windows: common install locations (install script may not be on Streamlit's PATH)
+    if os.name == "nt":
+        for base in (
+            os.environ.get("USERPROFILE", ""),
+            os.environ.get("LOCALAPPDATA", ""),
+        ):
+            if not base:
+                continue
+            for subdir, exe in (
+                (".cursor/bin", "agent.exe"),
+                ("AppData/Local/cursor-agent", "agent.exe"),
+                ("cursor-agent", "agent.exe"),
+            ):
+                candidate = Path(base) / subdir / exe
+                if candidate.is_file():
+                    return str(candidate.resolve())
+
+    return "agent"  # fallback for error message
 
 
 def stream_response(
@@ -66,9 +101,12 @@ def stream_response(
         yield (
             "error",
             "Cursor CLI (`agent`) not found.\n\n"
-            "Install on Windows:\n```\n"
-            "irm 'https://cursor.com/install?win32=true' | iex\n```\n"
-            "Then run `agent login` to authenticate.",
+            "If you already installed and logged in in another terminal, set the full path "
+            "so this app can find it (e.g. in the same terminal before running Streamlit):\n\n"
+            "**PowerShell:** `$env:INSTRUMENT_AGENT_PATH = \"C:\\path\\to\\agent.exe\"`\n\n"
+            "To find where `agent` is: in a terminal where `agent` works, run "
+            "`(Get-Command agent).Source` (PowerShell) or `where agent` (CMD).\n\n"
+            "Otherwise install: `irm 'https://cursor.com/install?win32=true' | iex` then `agent login`.",
         )
         yield ("done", "1")
         return
