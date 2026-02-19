@@ -9,6 +9,7 @@ Default working directory for Cursor CLI:
   - Set env INSTRUMENT_CWD at run time to override (e.g. your target repo).
   - Otherwise defaults to this app's directory (ROOT).
 """
+import html
 import os
 import time
 from datetime import datetime
@@ -131,6 +132,33 @@ section[data-testid="stSidebar"] .stButton > button:hover {
     padding: 1px 0;
     font-family: monospace;
 }
+/* welcome greeting */
+.welcome-card {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border-radius: 12px;
+    padding: 1.75rem 2rem;
+    margin-bottom: 1.5rem;
+    border: 1px solid rgba(255,255,255,0.06);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+}
+.welcome-card .greeting {
+    font-size: 1.35rem;
+    font-weight: 600;
+    color: #e6edf3;
+    margin: 0 0 0.25rem 0;
+    letter-spacing: -0.02em;
+}
+.welcome-card .greeting .ip {
+    color: #58a6ff;
+    font-family: ui-monospace, monospace;
+    font-weight: 500;
+}
+.welcome-card .sub {
+    color: #8b949e;
+    font-size: 0.9rem;
+    margin: 0;
+    line-height: 1.5;
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -228,10 +256,14 @@ else:
 
 # Welcome screen when no conversation selected
 if not conv_id:
-    st.markdown("## 🔬 Instrument GPT")
+    safe_ip = html.escape(client_ip)
     st.markdown(
-        "Ask questions about instruments, logs, and debugging.  \n"
-        "Start a new conversation or pick one from the sidebar."
+        f'<div class="welcome-card">'
+        f'<p class="greeting">Hello, <span class="ip">{safe_ip}</span></p>'
+        f'<p class="sub">Ask questions about instruments, logs, and debugging.<br>'
+        f'Start a new conversation or pick one from the sidebar.</p>'
+        f'</div>',
+        unsafe_allow_html=True,
     )
 
 # Render existing messages
