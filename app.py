@@ -1,278 +1,300 @@
 """
-Instrument GPT: Chat-style Q&A via Cursor IDE.
-Flow: User question -> paste to Cursor Chat -> poll answer.md -> display.
+Instrument GPT — Chat-style Q&A powered by the Cursor Agent CLI.
+
+UI layout (ChatGPT-like):
+  Left sidebar  — conversation list per IP, new-chat button, settings
+  Right main    — current conversation messages with streaming responses
 """
-import json
-import sys
 import time
-import subprocess
-import uuid
 from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
-import pyperclip
+
+import db
+import cursor_cli
 
 ROOT = Path(__file__).resolve().parent
-CURSOR_CHAT_DIR = ROOT / "cursor_chat"
-INPUT_FILE = CURSOR_CHAT_DIR / "input.md"
-ANSWER_FILE = CURSOR_CHAT_DIR / "answer.md"
-AUTOMATE_SCRIPT = ROOT / "automate_cursor.py"
-IP_SESSIONS_FILE = CURSOR_CHAT_DIR / "ip_sessions.json"
-IP_EXPIRE_SECONDS = 2 * 60 * 60
-DEFAULT_LOG_MDC_TAG = "@log-download-and-debug.mdc"
 
-CURSOR_CHAT_DIR.mkdir(exist_ok=True)
+DEFAULT_MODEL = ""
+DEFAULT_MODE = "agent"
+DEFAULT_MDC_TAG = "@log-download-and-debug.mdc"
 
-ANSWER_ABS_PATH = str(ANSWER_FILE.resolve())
+db.init_db()
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 
-def get_client_ip() -> str | None:
+def get_client_ip() -> str:
     try:
         ctx = getattr(st, "context", None)
         if ctx is not None:
-            return getattr(ctx, "ip_address", None)
+            ip = getattr(ctx, "ip_address", None)
+            if ip:
+                return ip
     except Exception:
         pass
-    return None
+    return "127.0.0.1"
 
 
-def _load_ip_sessions() -> dict[str, float]:
-    try:
-        if IP_SESSIONS_FILE.exists():
-            data = json.loads(IP_SESSIONS_FILE.read_text(encoding="utf-8"))
-            return {k: float(v) for k, v in data.items()}
-    except (json.JSONDecodeError, OSError):
-        pass
-    return {}
+def auto_title(question: str) -> str:
+    title = question.strip().split("\n")[0]
+    return (title[:47] + "...") if len(title) > 50 else (title or "New Chat")
 
 
-def _save_ip_sessions(sessions: dict[str, float]) -> None:
-    try:
-        IP_SESSIONS_FILE.write_text(json.dumps(sessions, indent=0), encoding="utf-8")
-    except OSError:
-        pass
-
-
-def should_new_chat(client_ip: str | None, user_wants_new_chat: bool) -> bool:
-    if user_wants_new_chat:
-        return True
-    msgs = st.session_state.get("messages", [])
-    if len(msgs) == 1:
-        return True
-    if not client_ip:
-        return False
-    now = time.time()
-    sessions = _load_ip_sessions()
-    last = sessions.get(client_ip, 0)
-    if now - last > IP_EXPIRE_SECONDS:
-        return True
-    return False
-
-
-def update_ip_activity(client_ip: str | None) -> None:
-    if not client_ip:
-        return
-    sessions = _load_ip_sessions()
-    sessions[client_ip] = time.time()
-    _save_ip_sessions(sessions)
-
-
-def get_session_id() -> str:
-    if "session_id" not in st.session_state:
-        st.session_state.session_id = str(uuid.uuid4())[:8]
-    return st.session_state.session_id
-
-
-def get_history_file() -> Path:
-    return CURSOR_CHAT_DIR / f"history_{get_session_id()}.md"
-
-
-def append_to_history(question: str, answer: str) -> None:
-    hist_file = get_history_file()
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-    block = f"""
----
-## Q ({ts})
-{question}
-
-## A
-{answer}
-"""
-    with open(hist_file, "a", encoding="utf-8") as f:
-        f.write(block)
-
-
-def enrich_question_with_log_mdc(question: str) -> str:
-    tag = st.session_state.get("log_mdc_tag", DEFAULT_LOG_MDC_TAG).strip() or DEFAULT_LOG_MDC_TAG
-    if tag in question:
+def enrich_prompt(question: str, mdc_tag: str) -> str:
+    tag = mdc_tag.strip()
+    if not tag or tag in question:
         return question
     return (
-        f"Use {tag} as the primary guide for downloading latest logs and debugging.\n"
-        f"Follow its instrument/IP mapping and workflow.\n\n"
-        f"{question}"
+        f"Use {tag} as the primary guide for downloading latest logs "
+        f"and debugging.\nFollow its instrument/IP mapping and workflow."
+        f"\n\n{question}"
     )
 
 
-def build_prompt(question: str) -> str:
-    enriched = enrich_question_with_log_mdc(question.strip())
-    return (
-        f"{enriched}\n\n"
-        f"Write your answer to `{ANSWER_ABS_PATH}`."
-    )
+def build_context_prompt(messages: list[dict], new_question: str) -> str:
+    """Include recent history when we cannot --resume a CLI session."""
+    if not messages:
+        return new_question
+    parts = ["Previous conversation:\n"]
+    for msg in messages[-10:]:
+        role = "User" if msg["role"] == "user" else "Assistant"
+        content = msg["content"]
+        if len(content) > 2000:
+            content = content[:2000] + "…"
+        parts.append(f"\n{role}: {content}\n")
+    parts.append(f"\n---\nNew question: {new_question}")
+    return "\n".join(parts)
 
 
-def clear_answer():
-    ANSWER_FILE.write_text("", encoding="utf-8")
+def relative_time(ts: float) -> str:
+    diff = time.time() - ts
+    if diff < 60:
+        return "just now"
+    if diff < 3600:
+        return f"{int(diff / 60)}m ago"
+    if diff < 86400:
+        return f"{int(diff / 3600)}h ago"
+    return datetime.fromtimestamp(ts).strftime("%m/%d")
 
 
-def trigger_cursor(prompt: str, new_chat: bool = False) -> tuple[bool, str]:
-    INPUT_FILE.write_text(prompt, encoding="utf-8")
-    pyperclip.copy(prompt)
-    clear_answer()
-    args = [sys.executable, str(AUTOMATE_SCRIPT), str(INPUT_FILE)]
-    if new_chat:
-        args.append("--new-chat")
-    try:
-        result = subprocess.run(
-            args,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            cwd=str(ROOT),
-        )
-        if result.returncode != 0:
-            return False, result.stderr or "Automation script failed"
-        return True, ""
-    except subprocess.TimeoutExpired:
-        return False, "Automation script timed out"
-    except Exception as e:
-        return False, str(e)
+# ── Page config & CSS ────────────────────────────────────────────────────────
 
+st.set_page_config(page_title="Instrument GPT", page_icon="🔬", layout="wide")
 
-def poll_answer(timeout_seconds: int = 120, interval: float = 1.0, status=None) -> str | None:
-    deadline = time.time() + timeout_seconds
-    start = time.time()
+st.markdown(
+    """
+<style>
+/* ---- sidebar ---- */
+section[data-testid="stSidebar"] {
+    background-color: #171720;
+    min-width: 260px;
+}
+section[data-testid="stSidebar"] .stButton > button {
+    width: 100%;
+    text-align: left;
+    padding: 0.45rem 0.7rem;
+    border-radius: 0.5rem;
+    border: none;
+    background: transparent;
+    color: #c9d1d9;
+    font-size: 0.84rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+section[data-testid="stSidebar"] .stButton > button:hover {
+    background-color: #2a2a3d;
+}
+/* ---- main area ---- */
+.main .block-container {
+    max-width: 840px;
+    padding-top: 1.2rem;
+}
+/* hide chrome */
+#MainMenu, footer, header {visibility: hidden;}
+/* tool indicator */
+.tool-ind {
+    font-size: 0.78rem;
+    color: #777;
+    padding: 1px 0;
+    font-family: monospace;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
 
-    while time.time() < deadline:
-        elapsed = int(time.time() - start)
-        if status is not None:
-            status.update(label=f"Waiting for answer... ({elapsed}s)", state="running")
+# ── Session state defaults ───────────────────────────────────────────────────
 
-        try:
-            if ANSWER_FILE.exists():
-                content = ANSWER_FILE.read_text(encoding="utf-8").strip()
-                if content:
-                    time.sleep(1.0)
-                    content2 = ANSWER_FILE.read_text(encoding="utf-8").strip()
-                    return content2 if content2 and len(content2) >= len(content) else content
-        except (OSError, UnicodeDecodeError):
-            pass
-        time.sleep(interval)
+if "current_conv" not in st.session_state:
+    st.session_state.current_conv = None
 
-    try:
-        if ANSWER_FILE.exists():
-            c = ANSWER_FILE.read_text(encoding="utf-8").strip()
-            if c:
-                return c
-    except (OSError, UnicodeDecodeError):
-        pass
-    return None
+if "settings" not in st.session_state:
+    st.session_state.settings = {
+        "model": DEFAULT_MODEL,
+        "mode": DEFAULT_MODE,
+        "mdc_tag": DEFAULT_MDC_TAG,
+        "cwd": str(ROOT),
+    }
 
+client_ip = get_client_ip()
 
-st.set_page_config(page_title="Instrument GPT", page_icon="🔬")
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "user_wants_new_chat" not in st.session_state:
-    st.session_state.user_wants_new_chat = False
-if "log_mdc_tag" not in st.session_state:
-    st.session_state.log_mdc_tag = DEFAULT_LOG_MDC_TAG
-
-st.title("🔬 Instrument GPT")
-st.caption("Chat with Cursor IDE to get answers")
+# ── Sidebar ──────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.text_input(
-        "Log debug MDC tag",
-        key="log_mdc_tag",
-        help="Always prepended to every question sent to Cursor.",
-        placeholder="@log-download-and-debug.mdc",
-    )
-    if st.button("New chat", use_container_width=True):
-        st.session_state.messages = []
-        st.session_state.session_id = str(uuid.uuid4())[:8]
-        st.session_state.user_wants_new_chat = True
+    st.markdown("### 🔬 Instrument GPT")
+
+    if st.button("＋  New Chat", key="btn_new_chat", use_container_width=True):
+        st.session_state.current_conv = None
         st.rerun()
+
     st.divider()
 
-for msg in st.session_state.messages:
+    conversations = db.get_conversations(client_ip)
+
+    for conv in conversations:
+        is_active = st.session_state.current_conv == conv["id"]
+        col_title, col_del = st.columns([5, 1])
+        with col_title:
+            label = ("▸ " if is_active else "") + conv["title"]
+            if st.button(
+                label,
+                key=f"c_{conv['id']}",
+                use_container_width=True,
+                help=relative_time(conv["updated_at"]),
+            ):
+                st.session_state.current_conv = conv["id"]
+                st.rerun()
+        with col_del:
+            if st.button("×", key=f"d_{conv['id']}"):
+                db.delete_conversation(conv["id"])
+                if is_active:
+                    st.session_state.current_conv = None
+                st.rerun()
+
+    if conversations:
+        st.divider()
+
+    with st.expander("⚙  Settings"):
+        st.session_state.settings["model"] = st.text_input(
+            "Model",
+            value=st.session_state.settings["model"],
+            placeholder="(default)",
+            help="Leave empty for default model",
+        )
+        st.session_state.settings["mode"] = st.selectbox(
+            "Mode",
+            ["agent", "ask", "plan"],
+            index=["agent", "ask", "plan"].index(
+                st.session_state.settings["mode"]
+            ),
+        )
+        st.session_state.settings["mdc_tag"] = st.text_input(
+            "MDC Tag",
+            value=st.session_state.settings["mdc_tag"],
+            help="Prepended to every question for log-download guidance",
+        )
+        st.session_state.settings["cwd"] = st.text_input(
+            "Working Directory",
+            value=st.session_state.settings["cwd"],
+            help="Cursor CLI working directory",
+        )
+
+# ── Main area — load conversation ────────────────────────────────────────────
+
+conv_id = st.session_state.current_conv
+conv_info: dict | None = None
+
+if conv_id:
+    conv_info = db.get_conversation(conv_id)
+    if not conv_info:
+        st.session_state.current_conv = None
+        st.rerun()
+    messages = db.get_messages(conv_id)
+else:
+    messages = []
+
+# Welcome screen when no conversation selected
+if not conv_id:
+    st.markdown("## 🔬 Instrument GPT")
+    st.markdown(
+        "Ask questions about instruments, logs, and debugging.  \n"
+        "Start a new conversation or pick one from the sidebar."
+    )
+
+# Render existing messages
+for msg in messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-def send_and_poll(question: str, is_retry: bool = False):
-    """Send prompt to Cursor and poll for answer. Stores result in session state."""
-    full_prompt = build_prompt(question)
-    client_ip = get_client_ip()
-    user_wants = st.session_state.get("user_wants_new_chat", False)
-    new_chat = should_new_chat(client_ip, user_wants) and not is_retry
-    if user_wants:
-        st.session_state.user_wants_new_chat = False
+# ── Chat input & streaming response ─────────────────────────────────────────
 
-    with st.status("Sending to Cursor...") as status:
-        status.update(label="Switch to Cursor IDE now (Alt+Tab)...", state="running")
-        time.sleep(2)
-        status.update(label="Pasting to Cursor...", state="running")
-        ok, err = trigger_cursor(full_prompt, new_chat=new_chat)
-        if not ok:
-            status.update(label="Failed", state="error")
-            return None, client_ip
-        answer = poll_answer(timeout_seconds=600, status=status)
-        if answer:
-            status.update(label="Done!", state="complete")
-        else:
-            status.update(label="Timeout", state="error")
-        return answer, client_ip
+if prompt := st.chat_input("Ask anything…"):
+    settings = st.session_state.settings
 
+    # Create conversation on first message
+    if not conv_id:
+        conv_id = db.create_conversation(client_ip, auto_title(prompt))
+        st.session_state.current_conv = conv_id
+        conv_info = db.get_conversation(conv_id)
 
-if prompt := st.chat_input("Ask anything..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    st.session_state.pop("pending_retry", None)
-
+    # Persist & show the user message
+    db.add_message(conv_id, "user", prompt)
     with st.chat_message("user"):
         st.markdown(prompt)
 
+    # Build enriched prompt
+    enriched = enrich_prompt(prompt, settings.get("mdc_tag", ""))
+    cli_session = conv_info.get("cli_session_id") if conv_info else None
+
+    # If we have no CLI session to resume, prepend conversation history
+    if not cli_session and messages:
+        enriched = build_context_prompt(messages, enriched)
+
+    # Stream the assistant response
     with st.chat_message("assistant"):
-        answer, client_ip = send_and_poll(prompt)
-        if answer:
-            st.markdown(answer)
-            st.session_state.messages.append({"role": "assistant", "content": answer})
-            append_to_history(prompt, answer)
-        else:
-            st.warning("No response within 10 minutes.")
-            st.session_state.pending_retry = prompt
-            st.session_state.messages.append({"role": "assistant", "content": "_No response within 10 minutes._"})
+        response_area = st.empty()
+        tool_area = st.empty()
+        full_response = ""
 
-        update_ip_activity(client_ip)
+        for evt_type, payload in cursor_cli.stream_response(
+            prompt=enriched,
+            cwd=settings.get("cwd"),
+            model=settings.get("model") or None,
+            mode=settings.get("mode", "agent"),
+            resume_session=cli_session,
+        ):
+            if evt_type == "text":
+                full_response += payload
+                response_area.markdown(full_response + "▌")
 
-elif st.session_state.get("pending_retry"):
-    retry_prompt = st.session_state.pending_retry
-    if st.button("Retry"):
-        st.session_state.pop("pending_retry")
-        # Remove the timeout message from history
-        if st.session_state.messages and st.session_state.messages[-1]["content"] == "_No response within 10 minutes._":
-            st.session_state.messages.pop()
+            elif evt_type == "tool":
+                tool_area.markdown(
+                    f'<p class="tool-ind">🔧 {payload}</p>',
+                    unsafe_allow_html=True,
+                )
 
-        clear_answer()
-        with st.chat_message("assistant"):
-            answer, client_ip = send_and_poll(retry_prompt, is_retry=True)
-            if answer:
-                st.markdown(answer)
-                st.session_state.messages.append({"role": "assistant", "content": answer})
-                append_to_history(retry_prompt, answer)
-            else:
-                st.warning("No response within 10 minutes.")
-                st.session_state.pending_retry = retry_prompt
-                st.session_state.messages.append({"role": "assistant", "content": "_No response within 10 minutes._"})
+            elif evt_type == "session_id":
+                db.update_cli_session(conv_id, payload)
 
-            update_ip_activity(client_ip)
+            elif evt_type == "error" and not full_response:
+                full_response = f"**Error:** {payload}"
+
+            elif evt_type == "done":
+                tool_area.empty()
+                response_area.markdown(
+                    full_response or "_No response received._"
+                )
+
+    # Persist the assistant reply
+    if full_response:
+        db.add_message(conv_id, "assistant", full_response)
+
+    # Auto-title from first user message
+    user_msgs = [m for m in db.get_messages(conv_id) if m["role"] == "user"]
+    if len(user_msgs) == 1:
+        db.update_title(conv_id, auto_title(prompt))
+
+    st.rerun()
