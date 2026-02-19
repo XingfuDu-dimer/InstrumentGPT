@@ -1,6 +1,24 @@
 # Instrument GPT
 
-Chat-style Q&A powered by Cursor IDE. Sends questions to Cursor Chat via keyboard/mouse automation and reads answers from the `answer.md` file.
+Chat-style Q&A powered by the Cursor Agent CLI. Features a ChatGPT-like UI with per-user conversation history, streaming responses, and sidebar conversation management.
+
+## Prerequisites
+
+1. **Cursor CLI** — install and authenticate:
+
+```powershell
+# Windows PowerShell
+irm 'https://cursor.com/install?win32=true' | iex
+
+# macOS / Linux / WSL
+curl https://cursor.com/install -fsS | bash
+```
+
+```bash
+agent login
+```
+
+2. **Python 3.11+**
 
 ## Install
 
@@ -10,20 +28,26 @@ pip install -r requirements.txt
 
 ## Usage
 
-1. **Open Cursor IDE first** and keep the window focusable.
-2. Run the Streamlit app:
-
 ```bash
 streamlit run app.py
 ```
 
-3. Type your question in the chat input. **During the 4-second countdown, switch to Cursor IDE (Alt+Tab)** so the paste goes into Cursor, not the browser.
-4. Automation pastes the question into Cursor Chat and submits. It waits for Cursor to write the answer to `cursor_chat/answer.md`.
-5. The webpage polls `answer.md` and displays the answer.
+Open the URL shown in the terminal (default `http://localhost:8501`). Type a question and the response streams in real-time from the Cursor Agent CLI.
 
-## Notes
+## Features
 
-- The Cursor window title must contain "Cursor".
-- The prompt includes a system instruction asking Cursor to write its answer to `cursor_chat/answer.md`.
-- If auto-focus fails, focus the Cursor window manually and try again.
-- Timeout is 2 minutes. If Cursor hasn't finished, check `cursor_chat/answer.md` manually.
+- **Streaming responses** — text arrives incrementally via `agent -p --output-format stream-json`
+- **Per-IP conversation history** — each user gets isolated conversations stored in SQLite
+- **Conversation switching** — sidebar lists all conversations; click to switch, `×` to delete
+- **Session resume** — subsequent messages in a conversation use `--resume` to maintain CLI context
+- **Configurable** — model, agent mode (agent/ask/plan), MDC tag, and working directory adjustable in the sidebar settings
+
+## Project Structure
+
+```
+app.py            Streamlit UI (sidebar + chat)
+cursor_cli.py     Cursor CLI wrapper with NDJSON stream parsing
+db.py             SQLite database for conversations & messages
+requirements.txt  Python dependencies
+data/             Auto-created; holds conversations.db
+```
