@@ -24,17 +24,6 @@ DEFAULT_LOG_MDC_TAG = "@log-download-and-debug.mdc"
 
 CURSOR_CHAT_DIR.mkdir(exist_ok=True)
 
-LOG_DEBUG_KEYWORDS = (
-    "download latest log",
-    "download logs",
-    "latest log",
-    "service bundle",
-    "systemhealth",
-    "debug log",
-    "analyze log",
-    "log analysis",
-)
-
 ANSWER_ABS_PATH = str(ANSWER_FILE.resolve())
 
 
@@ -114,16 +103,9 @@ def append_to_history(question: str, answer: str) -> None:
         f.write(block)
 
 
-def should_attach_log_mdc(question: str) -> bool:
-    q = question.lower()
-    return any(k in q for k in LOG_DEBUG_KEYWORDS)
-
-
 def enrich_question_with_log_mdc(question: str) -> str:
     tag = st.session_state.get("log_mdc_tag", DEFAULT_LOG_MDC_TAG).strip() or DEFAULT_LOG_MDC_TAG
     if tag in question:
-        return question
-    if not should_attach_log_mdc(question):
         return question
     return (
         f"Use {tag} as the primary guide for downloading latest logs and debugging.\n"
@@ -214,7 +196,7 @@ with st.sidebar:
     st.text_input(
         "Log debug MDC tag",
         key="log_mdc_tag",
-        help="Auto-attached when query mentions log download/analysis.",
+        help="Always prepended to every question sent to Cursor.",
         placeholder="@log-download-and-debug.mdc",
     )
     if st.button("New chat", use_container_width=True):

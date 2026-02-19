@@ -65,11 +65,14 @@ def _open_new_chat():
 
 def paste_and_submit(open_chat: bool = False):
     """
-    - open_chat=True: Only when new chat triggered. Open chat via palette, then paste + Enter.
-    - open_chat=False: Same session, chat already open. Just paste + Enter.
+    - open_chat=True: New chat via palette, then paste + Enter.
+    - open_chat=False: Ctrl+L to focus existing chat input, then paste + Enter.
     """
     if open_chat:
         _open_new_chat()
+    else:
+        pyautogui.hotkey("ctrl", "l")
+        time.sleep(0.8)
     pyautogui.hotkey("ctrl", "v")
     time.sleep(0.3)
     pyautogui.press("enter")
