@@ -71,6 +71,10 @@ def paste_and_submit(open_chat: bool = False):
     if open_chat:
         _open_new_chat()
     else:
+        pyautogui.press("escape")
+        time.sleep(0.2)
+        pyautogui.hotkey("ctrl", "1")
+        time.sleep(0.3)
         pyautogui.hotkey("ctrl", "l")
         time.sleep(0.8)
     pyautogui.hotkey("ctrl", "v")
