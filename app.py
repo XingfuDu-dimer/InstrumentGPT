@@ -161,8 +161,12 @@ def enrich_question_with_log_mdc(question: str) -> str:
 def build_prompt(question: str, answer_file: Path) -> str:
     """Build prompt sent to Cursor."""
     enriched_question = enrich_question_with_log_mdc(question.strip())
-    _ = answer_file  # kept for API compatibility
-    return enriched_question
+    answer_filename = answer_file.name
+    write_hint = (
+        "\n\nPlease write your final answer to "
+        f"`cursor_chat/{answer_filename}` in this repo."
+    )
+    return enriched_question + write_hint
 
 
 def clear_answer(answer_file: Path):
