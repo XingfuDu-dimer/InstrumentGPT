@@ -58,9 +58,12 @@ def enrich_prompt(question: str, mdc_tag: str) -> str:
     if not tag or tag in question:
         return question
     return (
-        f"Use {tag} as the primary guide for downloading latest logs "
-        f"and debugging.\nFollow its instrument/IP mapping and workflow."
-        f"\n\n{question}"
+        f"When the user asks about logs, devices, or debugging (e.g. instrument IP, "
+        f"timeouts, errors, log files), use {tag} as the primary guide and follow its "
+        f"workflow.\n"
+        f"For other questions (greetings, jokes, general chat), answer normally and "
+        f"do not mention the guide or ask for device/target.\n\n"
+        f"User: {question}"
     )
 
 
