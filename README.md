@@ -1,6 +1,8 @@
 # Instrument GPT
 
-Chat-style Q&A powered by the Cursor Agent CLI. Features a ChatGPT-like UI with per-user conversation history, streaming responses, and sidebar conversation management.
+**Instrument GPT** is the tool (this repo). Your **instrument repo** (or any project you work on) is the real working directory — that’s where the Cursor agent runs (reads files, runs commands, etc.).
+
+This app gives you a ChatGPT-like UI to talk to the Cursor Agent CLI: per-user conversation history, streaming responses, and sidebar conversation management. The agent’s **working directory** should point at your instrument project, not at Instrument GPT.
 
 ## Prerequisites
 
@@ -9,10 +11,14 @@ Chat-style Q&A powered by the Cursor Agent CLI. Features a ChatGPT-like UI with 
 ```powershell
 # Windows PowerShell
 irm 'https://cursor.com/install?win32=true' | iex
+```
 
+```bash
 # macOS / Linux / WSL
 curl https://cursor.com/install -fsS | bash
 ```
+
+Then log in (once):
 
 ```bash
 agent login
@@ -28,26 +34,38 @@ pip install -r requirements.txt
 
 ## Usage
 
-```bash
+Set the **default working directory** to your **Instrument directory** (the real repo the agent should run in). Instrument GPT lives elsewhere; the agent’s cwd should be your project.
+
+- **`INSTRUMENT_CWD`** — set this to your instrument (or target) repo path when you start the app. That becomes the default "Working Directory" in the app.
+- If unset or invalid, it falls back to the Instrument GPT app directory (only useful for trying the app; for real use, set your instrument path).
+
+```powershell
+# Windows PowerShell — replace with your real project path
+$env:INSTRUMENT_CWD = "C:\Users\You\Desktop\YourProject"
 streamlit run app.py
 ```
 
-Open the URL shown in the terminal (default `http://localhost:8501`). Type a question and the response streams in real-time from the Cursor Agent CLI.
+```bash
+# macOS / Linux / WSL — replace with your real project path
+INSTRUMENT_CWD=/home/you/YourProject streamlit run app.py
+```
+
+Then open the URL shown (default `http://localhost:8501`). You can change **Working Directory**, model, mode, and MDC tag in the sidebar **Settings** anytime.
 
 ## Features
 
-- **Streaming responses** — text arrives incrementally via `agent -p --output-format stream-json`
-- **Per-IP conversation history** — each user gets isolated conversations stored in SQLite
-- **Conversation switching** — sidebar lists all conversations; click to switch, `×` to delete
-- **Session resume** — subsequent messages in a conversation use `--resume` to maintain CLI context
-- **Configurable** — model, agent mode (agent/ask/plan), MDC tag, and working directory adjustable in the sidebar settings
+- **Streaming responses** — text streams in via `agent -p --output-format stream-json`
+- **Per-IP conversation history** — SQLite-backed; each client gets isolated conversations
+- **Conversation list** — sidebar shows all conversations; click to switch, **×** to delete
+- **Session resume** — follow-up messages in a conversation use `--resume` for CLI context
+- **Configurable** — model, mode (agent/ask/plan), MDC tag, working directory in sidebar Settings
 
-## Project Structure
+## Project structure
 
-```
-app.py            Streamlit UI (sidebar + chat)
-cursor_cli.py     Cursor CLI wrapper with NDJSON stream parsing
-db.py             SQLite database for conversations & messages
-requirements.txt  Python dependencies
-data/             Auto-created; holds conversations.db
-```
+| Path | Description |
+|------|-------------|
+| `app.py` | Streamlit UI (sidebar + chat) |
+| `cursor_cli.py` | Cursor CLI wrapper, NDJSON stream parsing |
+| `db.py` | SQLite schema and access for conversations & messages |
+| `requirements.txt` | Python dependencies |
+| `data/` | Auto-created; contains `conversations.db` |

@@ -4,7 +4,12 @@ Instrument GPT — Chat-style Q&A powered by the Cursor Agent CLI.
 UI layout (ChatGPT-like):
   Left sidebar  — conversation list per IP, new-chat button, settings
   Right main    — current conversation messages with streaming responses
+
+Default working directory for Cursor CLI:
+  - Set env INSTRUMENT_CWD at run time to override (e.g. your target repo).
+  - Otherwise defaults to this app's directory (ROOT).
 """
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +20,11 @@ import db
 import cursor_cli
 
 ROOT = Path(__file__).resolve().parent
+
+# Default cwd: env INSTRUMENT_CWD at start, else ROOT
+DEFAULT_CWD = os.environ.get("INSTRUMENT_CWD")
+if not DEFAULT_CWD or not Path(DEFAULT_CWD).exists():
+    DEFAULT_CWD = str(ROOT)
 
 DEFAULT_MODEL = ""
 DEFAULT_MODE = "agent"
@@ -136,7 +146,7 @@ if "settings" not in st.session_state:
         "model": DEFAULT_MODEL,
         "mode": DEFAULT_MODE,
         "mdc_tag": DEFAULT_MDC_TAG,
-        "cwd": str(ROOT),
+        "cwd": DEFAULT_CWD,
     }
 
 client_ip = get_client_ip()
@@ -199,7 +209,7 @@ with st.sidebar:
         st.session_state.settings["cwd"] = st.text_input(
             "Working Directory",
             value=st.session_state.settings["cwd"],
-            help="Cursor CLI working directory",
+            help="Cursor CLI cwd (repo to operate on). Default at start: INSTRUMENT_CWD or app dir.",
         )
 
 # ── Main area — load conversation ────────────────────────────────────────────
