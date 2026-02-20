@@ -79,6 +79,7 @@ def stream_response(
         agent, "-p",
         "--output-format", "stream-json",
         "--stream-partial-output",
+        "-f",
     ]
     if model:
         args.extend(["-m", model])
@@ -86,11 +87,17 @@ def stream_response(
         args.extend(["--mode", mode])
     if resume_session:
         args.extend(["--resume", resume_session])
-    args.extend(["-f", "--", prompt])
+
+    # Pass short prompts as arg; long prompts via stdin to avoid
+    # Windows command line length limit (~8191 chars).
+    use_stdin = len(prompt) > 4000
+    if not use_stdin:
+        args.extend(["--", prompt])
 
     try:
         process = subprocess.Popen(
             args,
+            stdin=subprocess.PIPE if use_stdin else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -99,6 +106,9 @@ def stream_response(
             bufsize=1,
             cwd=str(cwd) if cwd else None,
         )
+        if use_stdin:
+            process.stdin.write(prompt)
+            process.stdin.close()
     except FileNotFoundError:
         yield (
             "error",

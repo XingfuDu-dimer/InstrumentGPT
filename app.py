@@ -134,11 +134,11 @@ def build_context_prompt(messages: list[dict], new_question: str) -> str:
     if not messages:
         return new_question
     history_parts = []
-    for msg in messages[-10:]:
+    for msg in messages[-6:]:
         role = "User" if msg["role"] == "user" else "Assistant"
         content = msg["content"]
-        if len(content) > 2000:
-            content = content[:2000] + "…"
+        if len(content) > 800:
+            content = content[:800] + "…"
         history_parts.append(f"{role}: {content}")
     history_block = "\n\n".join(history_parts)
     return (
