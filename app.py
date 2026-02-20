@@ -173,7 +173,12 @@ def build_context_prompt(
     history_block = "\n\n".join(history_parts)
 
     if is_debug:
-        note = "Answer the question above, using history for context."
+        note = (
+            "Answer the question above, using history for context. "
+            "If logs were already downloaded and analyzed in the history, "
+            "reuse those results — do NOT re-download unless the user "
+            "explicitly asks for fresh/new logs."
+        )
     else:
         note = (
             "Answer the question above directly. "
