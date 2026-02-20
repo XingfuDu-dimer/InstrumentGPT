@@ -69,60 +69,36 @@ _OCTET_TO_DEV = {v: k for k, v in _DEV_TO_OCTET.items()}
 
 _DEVICE_PATTERNS = [
     # zspr 52, zspr052, ZSPR 052, etc.
-    re.compile(r"zspr\s*0?(\d{2})", re.IGNORECASE),
+    ("zspr", re.compile(r"zspr\s*0?(\d{2})", re.IGNORECASE)),
     # Full IP: 10.1.1.45 ~ 10.1.1.50
-    re.compile(r"10\.1\.1\.(4[5-9]|50)(?!\d)"),
-    # 3-digit device number: 050 ~ 055 (not part of a larger number)
-    re.compile(r"(?<!\d)0(5[0-5])(?!\d)"),
-    # Bare 2-digit: 45~50 as IP octet, or 50~55 as device shorthand
-    re.compile(r"(?<!\d)(5[0-5])(?!\d)"),
-    re.compile(r"(?<!\d)(4[5-9])(?!\d)"),
+    ("ip",   re.compile(r"10\.1\.1\.(4[5-9]|50)(?!\d)")),
+    # 3-digit device number with leading zero: 050 ~ 055
+    # Exclude timestamps/version-like contexts (no : or . adjacent)
+    ("dev3", re.compile(r"(?<![\d:.])0(5[0-5])(?![\d:.])")),
 ]
-
-
-def _resolve_bare_number(raw: str) -> tuple[str, str] | None:
-    """Resolve a bare 2-digit number to (device, octet).
-    50-55 → device name (050-055); 45-49 → IP octet."""
-    n = int(raw)
-    if 50 <= n <= 55:
-        dev = f"0{n}"
-        octet = _DEV_TO_OCTET.get(dev)
-        if octet:
-            return dev, octet
-    if 45 <= n <= 49:
-        octet = raw
-        dev = _OCTET_TO_DEV.get(octet)
-        if dev:
-            return dev, octet
-    return None
 
 
 def _extract_device(question: str) -> str:
     """Extract device info from user message; return a 'Target device: ...' line or ''."""
-    for i, pat in enumerate(_DEVICE_PATTERNS):
+    for kind, pat in _DEVICE_PATTERNS:
         m = pat.search(question)
         if not m:
             continue
         raw = m.group(1)
 
-        if i == 0:  # zspr prefix
+        if kind == "zspr":
             dev = raw.zfill(3)
             octet = _DEV_TO_OCTET.get(dev)
             if not octet:
                 continue
-        elif i == 1:  # full IP
+        elif kind == "ip":
             octet = raw
             dev = _OCTET_TO_DEV.get(octet, f"0{raw}")
-        elif i == 2:  # 3-digit 050-055
+        elif kind == "dev3":
             dev = raw.zfill(3)
             octet = _DEV_TO_OCTET.get(dev)
             if not octet:
                 continue
-        else:  # bare 2-digit
-            result = _resolve_bare_number(raw)
-            if not result:
-                continue
-            dev, octet = result
 
         return f"Target device: zspr {dev} (10.1.1.{octet})\n"
     return ""
@@ -134,9 +110,15 @@ def enrich_prompt(question: str, mdc_tag: str) -> str:
         return question
     if not _DEBUG_PATTERN.search(question):
         return question
-    device_line = _extract_device(question)
+    device_hint = _extract_device(question)
+    if device_hint:
+        return (
+            f"Use {tag} as the primary guide. "
+            f"The user's target device is {device_hint.strip().removeprefix('Target device: ')}. "
+            f"Proceed directly with their request — do not ask for the device again.\n\n"
+            f"{question}"
+        )
     return (
-        f"{device_line}"
         f"Use {tag} as the primary guide for downloading latest logs "
         f"and debugging. Follow its instrument/IP mapping and workflow.\n\n"
         f"{question}"
@@ -370,9 +352,14 @@ if prompt := st.chat_input("Ask anything…"):
     enriched = enrich_prompt(prompt, settings.get("mdc_tag", ""))
     cli_session = conv_info.get("cli_session_id") if conv_info else None
 
-    # If we have no CLI session to resume, prepend conversation history
-    if not cli_session and messages:
+    # Always prepend conversation history for context
+    # (--resume alone is not reliable enough in print mode)
+    if messages:
         enriched = build_context_prompt(messages, enriched)
+
+    # Debug: show the actual prompt sent to CLI
+    with st.expander("Debug: actual prompt sent", expanded=False):
+        st.code(enriched, language="markdown")
 
     # Stream the assistant response
     with st.chat_message("assistant"):
