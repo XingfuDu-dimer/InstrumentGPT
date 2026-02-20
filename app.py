@@ -60,6 +60,45 @@ _DEBUG_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Device number (050-055) ↔ IP last octet (45-50)
+_DEV_TO_OCTET = {
+    "050": "45", "051": "46", "052": "47",
+    "053": "48", "054": "49", "055": "50",
+}
+_OCTET_TO_DEV = {v: k for k, v in _DEV_TO_OCTET.items()}
+
+_DEVICE_PATTERNS = [
+    re.compile(r"(?:zspr)\s*0?(\d{2})", re.IGNORECASE),
+    re.compile(r"10\.1\.1\.(4[5-9]|50)\b"),
+    re.compile(r"\b0(5[0-5])\b"),
+]
+
+
+def _extract_device(question: str) -> str:
+    """Extract device info from user message; return a 'Target device: ...' line or ''."""
+    for pat in _DEVICE_PATTERNS:
+        m = pat.search(question)
+        if not m:
+            continue
+        raw = m.group(1)
+
+        if pat is _DEVICE_PATTERNS[0]:
+            dev = raw.zfill(3)
+            octet = _DEV_TO_OCTET.get(dev)
+            if not octet:
+                continue
+        elif pat is _DEVICE_PATTERNS[1]:
+            octet = raw
+            dev = _OCTET_TO_DEV.get(octet, f"0{raw}")
+        else:
+            dev = raw.zfill(3)
+            octet = _DEV_TO_OCTET.get(dev)
+            if not octet:
+                continue
+
+        return f"Target device: zspr {dev} (10.1.1.{octet})\n"
+    return ""
+
 
 def enrich_prompt(question: str, mdc_tag: str) -> str:
     tag = mdc_tag.strip()
@@ -67,7 +106,9 @@ def enrich_prompt(question: str, mdc_tag: str) -> str:
         return question
     if not _DEBUG_PATTERN.search(question):
         return question
+    device_line = _extract_device(question)
     return (
+        f"{device_line}"
         f"Use {tag} as the primary guide for downloading latest logs "
         f"and debugging. Follow its instrument/IP mapping and workflow.\n\n"
         f"{question}"
