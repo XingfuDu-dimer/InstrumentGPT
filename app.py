@@ -68,33 +68,61 @@ _DEV_TO_OCTET = {
 _OCTET_TO_DEV = {v: k for k, v in _DEV_TO_OCTET.items()}
 
 _DEVICE_PATTERNS = [
-    re.compile(r"(?:zspr)\s*0?(\d{2})", re.IGNORECASE),
-    re.compile(r"10\.1\.1\.(4[5-9]|50)\b"),
-    re.compile(r"\b0(5[0-5])\b"),
+    # zspr 52, zspr052, ZSPR 052, etc.
+    re.compile(r"zspr\s*0?(\d{2})", re.IGNORECASE),
+    # Full IP: 10.1.1.45 ~ 10.1.1.50
+    re.compile(r"10\.1\.1\.(4[5-9]|50)(?!\d)"),
+    # 3-digit device number: 050 ~ 055 (not part of a larger number)
+    re.compile(r"(?<!\d)0(5[0-5])(?!\d)"),
+    # Bare 2-digit: 45~50 as IP octet, or 50~55 as device shorthand
+    re.compile(r"(?<!\d)(5[0-5])(?!\d)"),
+    re.compile(r"(?<!\d)(4[5-9])(?!\d)"),
 ]
+
+
+def _resolve_bare_number(raw: str) -> tuple[str, str] | None:
+    """Resolve a bare 2-digit number to (device, octet).
+    50-55 → device name (050-055); 45-49 → IP octet."""
+    n = int(raw)
+    if 50 <= n <= 55:
+        dev = f"0{n}"
+        octet = _DEV_TO_OCTET.get(dev)
+        if octet:
+            return dev, octet
+    if 45 <= n <= 49:
+        octet = raw
+        dev = _OCTET_TO_DEV.get(octet)
+        if dev:
+            return dev, octet
+    return None
 
 
 def _extract_device(question: str) -> str:
     """Extract device info from user message; return a 'Target device: ...' line or ''."""
-    for pat in _DEVICE_PATTERNS:
+    for i, pat in enumerate(_DEVICE_PATTERNS):
         m = pat.search(question)
         if not m:
             continue
         raw = m.group(1)
 
-        if pat is _DEVICE_PATTERNS[0]:
+        if i == 0:  # zspr prefix
             dev = raw.zfill(3)
             octet = _DEV_TO_OCTET.get(dev)
             if not octet:
                 continue
-        elif pat is _DEVICE_PATTERNS[1]:
+        elif i == 1:  # full IP
             octet = raw
             dev = _OCTET_TO_DEV.get(octet, f"0{raw}")
-        else:
+        elif i == 2:  # 3-digit 050-055
             dev = raw.zfill(3)
             octet = _DEV_TO_OCTET.get(dev)
             if not octet:
                 continue
+        else:  # bare 2-digit
+            result = _resolve_bare_number(raw)
+            if not result:
+                continue
+            dev, octet = result
 
         return f"Target device: zspr {dev} (10.1.1.{octet})\n"
     return ""
