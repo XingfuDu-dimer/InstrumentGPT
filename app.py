@@ -54,94 +54,40 @@ def auto_title(question: str) -> str:
     return (title[:47] + "...") if len(title) > 50 else (title or "New Chat")
 
 
-_DEBUG_PATTERN = re.compile(
-    r"(log|debug|device|timeout|error|instrument|zspr|door|led|"
-    r"download|diagnos|10\.1\.1\.\d|\.log\b)",
-    re.IGNORECASE,
-)
+_IP_PATTERN = re.compile(r"10\.1\.1\.(4[5-9]|50)(?!\d)")
 
-_CODE_QUESTION_PATTERN = re.compile(
-    r"(什[麼么]邏輯|什[麼么]逻辑|啥邏輯|啥逻辑|怎[麼么]實現|怎[麼么]实现"
-    r"|how\s+does|what\s+does|what\s+is\s+the\s+logic"
-    r"|explain\s+(this|the)\s+(code|function|logic|snippet)"
-    r"|這段.{0,4}(代碼|代码|code)|这段.{0,4}(代碼|代码|code)"
-    r"|這部分.{0,4}(代碼|代码|code|邏輯|逻辑)"
-    r"|这部分.{0,4}(代碼|代码|code|邏輯|逻辑)"
-    r"|源[碼码]|source\s*code|codebase|函[數数]|function\s+\w+\s*\()",
-    re.IGNORECASE,
-)
-
-# Device number (050-055) ↔ IP last octet (45-50)
-_DEV_TO_OCTET = {
-    "050": "45", "051": "46", "052": "47",
-    "053": "48", "054": "49", "055": "50",
+_OCTET_TO_DEV = {
+    "45": "050", "46": "051", "47": "052",
+    "48": "053", "49": "054", "50": "055",
 }
-_OCTET_TO_DEV = {v: k for k, v in _DEV_TO_OCTET.items()}
-
-_DEVICE_PATTERNS = [
-    # zspr 52, zspr052, ZSPR 052, etc.
-    ("zspr", re.compile(r"zspr\s*0?(\d{2})", re.IGNORECASE)),
-    # Full IP: 10.1.1.45 ~ 10.1.1.50
-    ("ip",   re.compile(r"10\.1\.1\.(4[5-9]|50)(?!\d)")),
-    # 3-digit device number with leading zero: 050 ~ 055
-    # Exclude timestamps/version-like contexts (no : or . adjacent)
-    ("dev3", re.compile(r"(?<![\d:.])0(5[0-5])(?![\d:.])")),
-]
 
 
-def _extract_device(question: str) -> str:
-    """Extract device info from user message; return a 'Target device: ...' line or ''."""
-    for kind, pat in _DEVICE_PATTERNS:
-        m = pat.search(question)
-        if not m:
-            continue
-        raw = m.group(1)
-
-        if kind == "zspr":
-            dev = raw.zfill(3)
-            octet = _DEV_TO_OCTET.get(dev)
-            if not octet:
-                continue
-        elif kind == "ip":
-            octet = raw
-            dev = _OCTET_TO_DEV.get(octet, f"0{raw}")
-        elif kind == "dev3":
-            dev = raw.zfill(3)
-            octet = _DEV_TO_OCTET.get(dev)
-            if not octet:
-                continue
-
-        return f"Target device: zspr {dev} (10.1.1.{octet})\n"
-    return ""
+def _extract_ip(question: str) -> tuple[str, str] | None:
+    """Match 10.1.1.xx in the current message only. Returns (ip, device) or None."""
+    m = _IP_PATTERN.search(question)
+    if not m:
+        return None
+    octet = m.group(1)
+    dev = _OCTET_TO_DEV.get(octet, f"0{octet}")
+    return f"10.1.1.{octet}", dev
 
 
-def _is_code_question(question: str) -> bool:
-    return bool(_CODE_QUESTION_PATTERN.search(question))
-
-
-def _is_debug_question(question: str) -> bool:
-    if _is_code_question(question):
-        return False
-    return bool(_DEBUG_PATTERN.search(question))
+def _has_device(question: str) -> bool:
+    return _extract_ip(question) is not None
 
 
 def enrich_prompt(question: str, mdc_tag: str) -> str:
     tag = mdc_tag.strip()
     if not tag or tag in question:
         return question
-    if not _is_debug_question(question):
+    result = _extract_ip(question)
+    if not result:
         return question
-    device_hint = _extract_device(question)
-    if device_hint:
-        return (
-            f"Use {tag} as the primary guide. "
-            f"The user's target device is {device_hint.strip().removeprefix('Target device: ')}. "
-            f"Proceed directly with their request — do not ask for the device again.\n\n"
-            f"{question}"
-        )
+    ip, dev = result
     return (
-        f"Use {tag} as the primary guide for downloading latest logs "
-        f"and debugging. Follow its instrument/IP mapping and workflow.\n\n"
+        f"Use {tag} as the primary guide. "
+        f"The user's target device is zspr {dev} ({ip}). "
+        f"Proceed directly with their request — do not ask for the device again.\n\n"
         f"{question}"
     )
 
@@ -161,7 +107,7 @@ def build_context_prompt(
     if not messages:
         return new_question
 
-    is_debug = _is_debug_question(raw_user_input or new_question)
+    is_debug = _has_device(raw_user_input or new_question)
 
     history_parts = []
     for msg in messages[-6:]:
