@@ -94,6 +94,8 @@ def stream_response(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
             cwd=str(cwd) if cwd else None,
         )

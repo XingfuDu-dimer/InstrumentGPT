@@ -11,6 +11,7 @@ Default working directory for Cursor CLI:
 """
 import html
 import os
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -53,17 +54,23 @@ def auto_title(question: str) -> str:
     return (title[:47] + "...") if len(title) > 50 else (title or "New Chat")
 
 
+_DEBUG_PATTERN = re.compile(
+    r"(log|debug|device|timeout|error|instrument|zspr|door|led|"
+    r"download|diagnos|10\.1\.1\.\d|\.log\b)",
+    re.IGNORECASE,
+)
+
+
 def enrich_prompt(question: str, mdc_tag: str) -> str:
     tag = mdc_tag.strip()
     if not tag or tag in question:
         return question
+    if not _DEBUG_PATTERN.search(question):
+        return question
     return (
-        f"When the user asks about logs, devices, or debugging (e.g. instrument IP, "
-        f"timeouts, errors, log files), use {tag} as the primary guide and follow its "
-        f"workflow.\n"
-        f"For other questions (greetings, jokes, general chat), answer normally and "
-        f"do not mention the guide or ask for device/target.\n\n"
-        f"User: {question}"
+        f"Use {tag} as the primary guide for downloading latest logs "
+        f"and debugging. Follow its instrument/IP mapping and workflow.\n\n"
+        f"{question}"
     )
 
 
