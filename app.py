@@ -60,6 +60,17 @@ _DEBUG_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_CODE_QUESTION_PATTERN = re.compile(
+    r"(什[麼么]邏輯|什[麼么]逻辑|啥邏輯|啥逻辑|怎[麼么]實現|怎[麼么]实现"
+    r"|how\s+does|what\s+does|what\s+is\s+the\s+logic"
+    r"|explain\s+(this|the)\s+(code|function|logic|snippet)"
+    r"|這段.{0,4}(代碼|代码|code)|这段.{0,4}(代碼|代码|code)"
+    r"|這部分.{0,4}(代碼|代码|code|邏輯|逻辑)"
+    r"|这部分.{0,4}(代碼|代码|code|邏輯|逻辑)"
+    r"|源[碼码]|source\s*code|codebase|函[數数]|function\s+\w+\s*\()",
+    re.IGNORECASE,
+)
+
 # Device number (050-055) ↔ IP last octet (45-50)
 _DEV_TO_OCTET = {
     "050": "45", "051": "46", "052": "47",
@@ -104,11 +115,21 @@ def _extract_device(question: str) -> str:
     return ""
 
 
+def _is_code_question(question: str) -> bool:
+    return bool(_CODE_QUESTION_PATTERN.search(question))
+
+
+def _is_debug_question(question: str) -> bool:
+    if _is_code_question(question):
+        return False
+    return bool(_DEBUG_PATTERN.search(question))
+
+
 def enrich_prompt(question: str, mdc_tag: str) -> str:
     tag = mdc_tag.strip()
     if not tag or tag in question:
         return question
-    if not _DEBUG_PATTERN.search(question):
+    if not _is_debug_question(question):
         return question
     device_hint = _extract_device(question)
     if device_hint:
@@ -125,14 +146,23 @@ def enrich_prompt(question: str, mdc_tag: str) -> str:
     )
 
 
-def build_context_prompt(messages: list[dict], new_question: str) -> str:
+def build_context_prompt(
+    messages: list[dict],
+    new_question: str,
+    raw_user_input: str = "",
+) -> str:
     """Include recent history when we cannot --resume a CLI session.
 
     The user's actual question comes FIRST so the agent sees it immediately.
     History is appended inside <conversation_history> tags as reference only.
+    When the current question is NOT about device debugging, an explicit note
+    tells the agent not to download logs even if the history is full of log analysis.
     """
     if not messages:
         return new_question
+
+    is_debug = _is_debug_question(raw_user_input or new_question)
+
     history_parts = []
     for msg in messages[-6:]:
         role = "User" if msg["role"] == "user" else "Assistant"
@@ -141,11 +171,21 @@ def build_context_prompt(messages: list[dict], new_question: str) -> str:
             content = content[:800] + "…"
         history_parts.append(f"{role}: {content}")
     history_block = "\n\n".join(history_parts)
+
+    if is_debug:
+        note = "Answer the question above, using history for context."
+    else:
+        note = (
+            "Answer the question above directly. "
+            "The history may contain log analysis or device debugging, but the "
+            "current question is NOT about that — do not download logs or "
+            "analyze devices. Just answer the question."
+        )
+
     return (
         f"{new_question}\n\n"
         f"<conversation_history>\n"
-        f"Below is the conversation history for reference. "
-        f"Answer the question above, not this context block.\n\n"
+        f"{note}\n\n"
         f"{history_block}\n"
         f"</conversation_history>"
     )
@@ -366,7 +406,7 @@ if prompt := st.chat_input("Ask anything…"):
     # Always prepend conversation history for context
     # (--resume alone is not reliable enough in print mode)
     if messages:
-        enriched = build_context_prompt(messages, enriched)
+        enriched = build_context_prompt(messages, enriched, prompt)
 
     # Debug: show the actual prompt sent to CLI
     with st.expander("Debug: actual prompt sent", expanded=False):
