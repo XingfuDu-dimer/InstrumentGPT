@@ -126,18 +126,29 @@ def enrich_prompt(question: str, mdc_tag: str) -> str:
 
 
 def build_context_prompt(messages: list[dict], new_question: str) -> str:
-    """Include recent history when we cannot --resume a CLI session."""
+    """Include recent history when we cannot --resume a CLI session.
+
+    The user's actual question comes FIRST so the agent sees it immediately.
+    History is appended inside <conversation_history> tags as reference only.
+    """
     if not messages:
         return new_question
-    parts = ["Previous conversation:\n"]
+    history_parts = []
     for msg in messages[-10:]:
         role = "User" if msg["role"] == "user" else "Assistant"
         content = msg["content"]
         if len(content) > 2000:
             content = content[:2000] + "…"
-        parts.append(f"\n{role}: {content}\n")
-    parts.append(f"\n---\nNew question: {new_question}")
-    return "\n".join(parts)
+        history_parts.append(f"{role}: {content}")
+    history_block = "\n\n".join(history_parts)
+    return (
+        f"{new_question}\n\n"
+        f"<conversation_history>\n"
+        f"Below is the conversation history for reference. "
+        f"Answer the question above, not this context block.\n\n"
+        f"{history_block}\n"
+        f"</conversation_history>"
+    )
 
 
 def relative_time(ts: float) -> str:
