@@ -52,17 +52,17 @@ _MODEL_OPTIONS = [
 ]
 _MODEL_LABELS = {
     "": "Auto (default)",
-    "Composer 1.5": "Composer 1.5  —  Cursor, $3.5 in",
-    "Claude 4.6 Sonnet": "Claude 4.6 Sonnet  —  Anthropic, $3 in",
-    "Claude 4.6 Opus": "Claude 4.6 Opus  —  Anthropic, $5 in",
-    "GPT-5.2": "GPT-5.2  —  OpenAI, $1.75 in",
-    "GPT-5.3 Codex": "GPT-5.3 Codex  —  OpenAI, $1.75 in",
-    "Gemini 3.1 Pro": "Gemini 3.1 Pro  —  Google, $2 in",
-    "Gemini 3 Flash": "Gemini 3 Flash  —  Google, $0.5 in",
+    "Composer 1.5": "Composer 1.5",
+    "Claude 4.6 Sonnet": "Claude 4.6 Sonnet",
+    "Claude 4.6 Opus": "Claude 4.6 Opus",
+    "GPT-5.2": "GPT-5.2",
+    "GPT-5.3 Codex": "GPT-5.3 Codex",
+    "Gemini 3.1 Pro": "Gemini 3.1 Pro",
+    "Gemini 3 Flash": "Gemini 3 Flash",
     "Grok Code": "Grok Code  —  xAI, $0.2 in",
-    "Claude 4.5 Sonnet": "Claude 4.5 Sonnet  —  Anthropic, $3 in",
-    "Claude 4.5 Opus": "Claude 4.5 Opus  —  Anthropic, $5 in",
-    "Composer 1": "Composer 1  —  Cursor, $1.25 in",
+    "Claude 4.5 Sonnet": "Claude 4.5 Sonnet",
+    "Claude 4.5 Opus": "Claude 4.5 Opus",
+    "Composer 1": "Composer 1",
 }
 
 db.init_db()
