@@ -11,8 +11,11 @@ Default working directory for Cursor CLI:
 """
 import glob
 import html
+import json
 import os
 import re
+import subprocess
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -197,7 +200,75 @@ def _split_images(content: str) -> tuple[str, list[str]]:
     return text, paths_str.split("|") if paths_str else []
 
 
+_PLOTLY_MARKER = "<!-- PLOTLY_CHART:"
+
+
+def _try_interactive_plot(cwd: str, response_text: str):
+    """Call dataAnalysisPlotly.py --plotly-json; return (cache_path, fig) or (None, None)."""
+    log_match = re.search(r'(InstrumentDebug[\w\-\.]+\.log)', response_text)
+    if not log_match:
+        return None, None
+    log_name = log_match.group(1)
+
+    log_path = os.path.join(cwd, "log", log_name)
+    if not os.path.isfile(log_path):
+        matches = glob.glob(os.path.join(cwd, "**", log_name), recursive=True)
+        log_path = matches[0] if matches else None
+    if not log_path or not os.path.isfile(log_path):
+        return None, None
+
+    script = os.path.join(cwd, "scripts", "dataAnalysisPlotly.py")
+    if not os.path.isfile(script):
+        return None, None
+
+    try:
+        result = subprocess.run(
+            [sys.executable, script, log_path, "--plotly-json"],
+            capture_output=True, text=True, cwd=cwd, timeout=60,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return None, None
+
+        import plotly.io as pio
+        fig = pio.from_json(result.stdout)
+
+        cache_dir = ROOT / "data" / "plotly_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file = cache_dir / f"{int(time.time() * 1000)}.json"
+        cache_file.write_text(result.stdout, encoding="utf-8")
+
+        return str(cache_file), fig
+    except Exception:
+        return None, None
+
+
+def _attach_plotly(content: str, cache_path: str) -> str:
+    return f"{content}\n{_PLOTLY_MARKER}{cache_path} -->"
+
+
+def _split_plotly(content: str) -> tuple[str, str | None]:
+    if _PLOTLY_MARKER not in content:
+        return content, None
+    idx = content.index(_PLOTLY_MARKER)
+    text = content[:idx].rstrip()
+    marker = content[idx:]
+    cache_path = marker[len(_PLOTLY_MARKER):-len(" -->")].strip()
+    return text, cache_path
+
+
 def _render_message(content: str):
+    if _PLOTLY_MARKER in content:
+        text, cache_path = _split_plotly(content)
+        st.markdown(text)
+        if cache_path and os.path.isfile(cache_path):
+            try:
+                import plotly.io as pio
+                fig = pio.from_json(Path(cache_path).read_text(encoding="utf-8"))
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception:
+                pass
+        return
+
     text, image_paths = _split_images(content)
     st.markdown(text)
     for img_path in image_paths:
@@ -502,14 +573,21 @@ if prompt := st.chat_input("Ask anything…"):
                     full_response or "_No response received._"
                 )
 
-        # Display any images the agent created during this request
-        new_images = _find_new_images(
-            settings.get("cwd", ""), request_start_time, full_response,
+        # Try interactive Plotly chart first, fall back to static images
+        plotly_cache, plotly_fig = _try_interactive_plot(
+            settings.get("cwd", ""), full_response,
         )
-        for img_path in new_images:
-            st.image(img_path, caption=os.path.basename(img_path))
-        if new_images:
-            full_response = _attach_images(full_response, new_images)
+        if plotly_fig:
+            st.plotly_chart(plotly_fig, use_container_width=True)
+            full_response = _attach_plotly(full_response, plotly_cache)
+        else:
+            new_images = _find_new_images(
+                settings.get("cwd", ""), request_start_time, full_response,
+            )
+            for img_path in new_images:
+                st.image(img_path, caption=os.path.basename(img_path))
+            if new_images:
+                full_response = _attach_images(full_response, new_images)
 
     # Normal completion — clear streaming state
     st.session_state.pop("_streaming_proc", None)
