@@ -362,6 +362,27 @@ section[data-testid="stSidebar"] .stButton > button {
 section[data-testid="stSidebar"] .stButton > button:hover {
     background-color: #2a2a3d;
 }
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] li,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] .stMarkdown,
+section[data-testid="stSidebar"] td,
+section[data-testid="stSidebar"] th,
+section[data-testid="stSidebar"] h4,
+section[data-testid="stSidebar"] blockquote {
+    color: #e0e0e0 !important;
+}
+section[data-testid="stSidebar"] code {
+    color: #79c0ff !important;
+    background-color: rgba(110,118,129,0.2) !important;
+}
+section[data-testid="stSidebar"] blockquote {
+    border-left-color: #3a3a5c !important;
+}
+section[data-testid="stSidebar"] hr {
+    border-color: #2a2a3d !important;
+}
 /* ---- main area ---- */
 .main .block-container {
     max-width: 840px;
