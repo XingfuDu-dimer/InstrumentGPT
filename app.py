@@ -9,6 +9,7 @@ Default working directory for Cursor CLI:
   - Set env INSTRUMENT_CWD at run time to override (e.g. your target repo).
   - Otherwise defaults to this app's directory (ROOT).
 """
+import glob
 import html
 import os
 import re
@@ -390,6 +391,8 @@ if prompt := st.chat_input("Ask anything…"):
     with st.expander("Debug: actual prompt sent", expanded=False):
         st.code(enriched, language="markdown")
 
+    request_start_time = time.time()
+
     # Start the CLI process
     process, proc_err = cursor_cli.create_process(
         prompt=enriched,
@@ -445,6 +448,20 @@ if prompt := st.chat_input("Ask anything…"):
                 response_area.markdown(
                     full_response or "_No response received._"
                 )
+
+        # Display any images the agent created during this request
+        cwd = settings.get("cwd", "")
+        if cwd and os.path.isdir(cwd):
+            new_images = []
+            for ext in ("*.png", "*.jpg", "*.jpeg", "*.svg"):
+                for img_path in glob.glob(
+                    os.path.join(cwd, "**", ext), recursive=True
+                ):
+                    if os.path.getmtime(img_path) > request_start_time:
+                        new_images.append(img_path)
+            new_images.sort(key=os.path.getmtime)
+            for img_path in new_images:
+                st.image(img_path, caption=os.path.basename(img_path))
 
     # Normal completion — clear streaming state
     st.session_state.pop("_streaming_proc", None)
