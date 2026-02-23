@@ -264,7 +264,7 @@ def _render_message(content: str):
             try:
                 import plotly.io as pio
                 fig = pio.from_json(Path(cache_path).read_text(encoding="utf-8"))
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key=f"plotly_{cache_path}")
             except Exception:
                 pass
         return
@@ -578,7 +578,7 @@ if prompt := st.chat_input("Ask anything…"):
             settings.get("cwd", ""), full_response,
         )
         if plotly_fig:
-            st.plotly_chart(plotly_fig, use_container_width=True)
+            st.plotly_chart(plotly_fig, use_container_width=True, key=f"plotly_live_{conv_id}")
             full_response = _attach_plotly(full_response, plotly_cache)
         else:
             new_images = _find_new_images(
