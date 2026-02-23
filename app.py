@@ -109,13 +109,22 @@ def build_context_prompt(
 
     is_debug = _has_device(raw_user_input or new_question)
 
+    MAX_HISTORY_CHARS = 50000
+
     history_parts = []
-    for msg in messages[-6:]:
+    total_chars = 0
+    for msg in reversed(messages):
         role = "User" if msg["role"] == "user" else "Assistant"
         content = msg["content"]
-        if len(content) > 800:
-            content = content[:800] + "…"
-        history_parts.append(f"{role}: {content}")
+        entry = f"{role}: {content}"
+        if total_chars + len(entry) > MAX_HISTORY_CHARS:
+            remaining = MAX_HISTORY_CHARS - total_chars
+            if remaining > 200:
+                history_parts.append(f"{role}: {content[:remaining]}…")
+            break
+        history_parts.append(entry)
+        total_chars += len(entry)
+    history_parts.reverse()
     history_block = "\n\n".join(history_parts)
 
     if is_debug:

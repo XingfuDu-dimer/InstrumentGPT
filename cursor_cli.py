@@ -88,16 +88,11 @@ def stream_response(
     if resume_session:
         args.extend(["--resume", resume_session])
 
-    # Pass short prompts as arg; long prompts via stdin to avoid
-    # Windows command line length limit (~8191 chars).
-    use_stdin = len(prompt) > 4000
-    if not use_stdin:
-        args.extend(["--", prompt])
-
+    # Always pass prompt via stdin to avoid Windows command line length limit.
     try:
         process = subprocess.Popen(
             args,
-            stdin=subprocess.PIPE if use_stdin else None,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -106,9 +101,8 @@ def stream_response(
             bufsize=1,
             cwd=str(cwd) if cwd else None,
         )
-        if use_stdin:
-            process.stdin.write(prompt)
-            process.stdin.close()
+        process.stdin.write(prompt)
+        process.stdin.close()
     except FileNotFoundError:
         yield (
             "error",
@@ -124,6 +118,7 @@ def stream_response(
         return
 
     session_id: str | None = None
+    accumulated = ""
     try:
         for raw_line in process.stdout:
             line = raw_line.strip()
@@ -145,7 +140,15 @@ def stream_response(
                 for item in data.get("message", {}).get("content", []):
                     text = item.get("text", "")
                     if item.get("type") == "text" and text:
-                        yield ("text", text)
+                        if accumulated and text.startswith(accumulated):
+                            # Final complete message — skip the already-streamed part
+                            new_part = text[len(accumulated):]
+                            if new_part:
+                                accumulated += new_part
+                                yield ("text", new_part)
+                        else:
+                            accumulated += text
+                            yield ("text", text)
 
             elif evt == "tool_call" and data.get("subtype") == "started":
                 desc = _describe_tool_call(data.get("tool_call", {}))
