@@ -36,6 +36,35 @@ DEFAULT_MODEL = ""
 DEFAULT_MODE = "agent"
 DEFAULT_MDC_TAG = "@log-download-and-debug.mdc"
 
+_MODEL_OPTIONS = [
+    "",
+    "Composer 1.5",
+    "Claude 4.6 Sonnet",
+    "Claude 4.6 Opus",
+    "GPT-5.2",
+    "GPT-5.3 Codex",
+    "Gemini 3.1 Pro",
+    "Gemini 3 Flash",
+    "Grok Code",
+    "Claude 4.5 Sonnet",
+    "Claude 4.5 Opus",
+    "Composer 1",
+]
+_MODEL_LABELS = {
+    "": "Auto (default)",
+    "Composer 1.5": "Composer 1.5  —  Cursor, $3.5 in",
+    "Claude 4.6 Sonnet": "Claude 4.6 Sonnet  —  Anthropic, $3 in",
+    "Claude 4.6 Opus": "Claude 4.6 Opus  —  Anthropic, $5 in",
+    "GPT-5.2": "GPT-5.2  —  OpenAI, $1.75 in",
+    "GPT-5.3 Codex": "GPT-5.3 Codex  —  OpenAI, $1.75 in",
+    "Gemini 3.1 Pro": "Gemini 3.1 Pro  —  Google, $2 in",
+    "Gemini 3 Flash": "Gemini 3 Flash  —  Google, $0.5 in",
+    "Grok Code": "Grok Code  —  xAI, $0.2 in",
+    "Claude 4.5 Sonnet": "Claude 4.5 Sonnet  —  Anthropic, $3 in",
+    "Claude 4.5 Opus": "Claude 4.5 Opus  —  Anthropic, $5 in",
+    "Composer 1": "Composer 1  —  Cursor, $1.25 in",
+}
+
 db.init_db()
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -431,11 +460,16 @@ with st.sidebar:
         st.divider()
 
     with st.expander("⚙  Settings"):
-        st.session_state.settings["model"] = st.text_input(
+        current_model = st.session_state.settings["model"]
+        if current_model not in _MODEL_OPTIONS:
+            _MODEL_OPTIONS.append(current_model)
+            _MODEL_LABELS[current_model] = current_model
+        st.session_state.settings["model"] = st.selectbox(
             "Model",
-            value=st.session_state.settings["model"],
-            placeholder="(default)",
-            help="Leave empty for default model",
+            options=_MODEL_OPTIONS,
+            index=_MODEL_OPTIONS.index(current_model),
+            format_func=lambda m: _MODEL_LABELS.get(m, m),
+            help="Select the model for the Cursor Agent CLI",
         )
         st.session_state.settings["mode"] = st.selectbox(
             "Mode",
