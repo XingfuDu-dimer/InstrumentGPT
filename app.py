@@ -459,6 +459,62 @@ with st.sidebar:
     if conversations:
         st.divider()
 
+    with st.expander("📖  How to Use"):
+        st.markdown("""
+**Instrument GPT** helps you download instrument logs, analyze errors, plot data, and debug with your codebase — all through natural conversation.
+
+---
+
+#### Supported Devices
+
+| Device | IP |
+|--------|-----|
+| zspr 050 | 10.1.1.45 |
+| zspr 051 | 10.1.1.46 |
+| zspr 052 | 10.1.1.47 |
+| zspr 053 | 10.1.1.48 |
+| zspr 054 | 10.1.1.49 |
+| zspr 055 | 10.1.1.50 |
+
+You can refer to a device by IP (e.g. `10.1.1.47`), device name (e.g. `zspr 052`, `052`, `52`), or just the last octet (e.g. `47`).
+
+---
+
+#### Quick Start — Example Prompts
+
+**Analyze an error** (specify device + describe the problem):
+> `10.1.1.47 Door open timeout error, what happened?`
+
+> `10.1.1.45 LED not blinking, can you check the logs?`
+
+**Check a specific log session**:
+> `10.1.1.47 check InstrumentDebug_2026-02-13_00-44-28.1.log for temp drop`
+
+**Paste log content for analysis** (include device):
+> `10.1.1.47 [2026-02-13 05:04:52.782][debug] temp 61.9, next line temp 29.4 — why the sudden drop?`
+
+**Plot PID / temperature control data**:
+> `10.1.1.47 plot temp control`
+
+> `10.1.1.45 plot PID`
+
+**Download all logs from a device**:
+> `10.1.1.47 download all logs`
+
+**General questions (no device needed)**:
+> `What causes a Door timeout error?`
+
+> `How does the DoorController handle initialization?`
+
+---
+
+#### Tips
+- **Include the device IP** in your question to trigger automatic log download and analysis.
+- **Without an IP**, the assistant answers from general knowledge and the codebase only (no download).
+- After downloading, the assistant analyzes the logs, cross-references your source code, and reports root cause, timeline, and fix suggestions.
+- **Interactive charts**: When you ask to plot data, the chart supports zoom, pan, and hover — use your mouse to explore.
+""")
+
     with st.expander("⚙  Settings"):
         current_model = st.session_state.settings["model"]
         if current_model not in _MODEL_OPTIONS:
