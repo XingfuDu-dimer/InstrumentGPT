@@ -58,21 +58,27 @@ def _find_agent_cmd() -> str:
     return "agent"  # fallback for error message
 
 
-def stream_response(
+_NOT_FOUND_MSG = (
+    "Cursor CLI (`agent`) not found.\n\n"
+    "If you already installed and logged in in another terminal, set the full path "
+    "so this app can find it (e.g. in the same terminal before running Streamlit):\n\n"
+    "**PowerShell:** `$env:INSTRUMENT_AGENT_PATH = \"C:\\path\\to\\agent.exe\"`\n\n"
+    "To find where `agent` is: in a terminal where `agent` works, run "
+    "`(Get-Command agent).Source` (PowerShell) or `where agent` (CMD).\n\n"
+    "Otherwise install: `irm 'https://cursor.com/install?win32=true' | iex` then `agent login`."
+)
+
+
+def create_process(
     prompt: str,
     cwd: str | Path | None = None,
     model: str | None = None,
     mode: str = "agent",
     resume_session: str | None = None,
-) -> Generator[tuple[str, str], None, None]:
-    """Stream response from Cursor CLI.
+) -> tuple[subprocess.Popen | None, str | None]:
+    """Start a Cursor CLI subprocess.
 
-    Yields (event_type, payload) tuples:
-        ("text",       "<chunk>")       — assistant text delta
-        ("tool",       "<description>") — tool activity indicator
-        ("session_id", "<id>")          — CLI session id (for --resume)
-        ("error",      "<message>")     — error detail
-        ("done",       "<exit_code>")   — stream finished
+    Returns (process, None) on success or (None, error_message) on failure.
     """
     agent = _find_agent_cmd()
     args = [
@@ -88,7 +94,6 @@ def stream_response(
     if resume_session:
         args.extend(["--resume", resume_session])
 
-    # Always pass prompt via stdin to avoid Windows command line length limit.
     try:
         process = subprocess.Popen(
             args,
@@ -103,20 +108,38 @@ def stream_response(
         )
         process.stdin.write(prompt)
         process.stdin.close()
+        return process, None
     except FileNotFoundError:
-        yield (
-            "error",
-            "Cursor CLI (`agent`) not found.\n\n"
-            "If you already installed and logged in in another terminal, set the full path "
-            "so this app can find it (e.g. in the same terminal before running Streamlit):\n\n"
-            "**PowerShell:** `$env:INSTRUMENT_AGENT_PATH = \"C:\\path\\to\\agent.exe\"`\n\n"
-            "To find where `agent` is: in a terminal where `agent` works, run "
-            "`(Get-Command agent).Source` (PowerShell) or `where agent` (CMD).\n\n"
-            "Otherwise install: `irm 'https://cursor.com/install?win32=true' | iex` then `agent login`.",
-        )
-        yield ("done", "1")
-        return
+        return None, _NOT_FOUND_MSG
 
+
+def kill_process(process: subprocess.Popen | None) -> None:
+    """Terminate a CLI subprocess if it is still running."""
+    if process is None:
+        return
+    try:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=3)
+    except Exception:
+        try:
+            process.kill()
+        except Exception:
+            pass
+
+
+def iter_events(
+    process: subprocess.Popen,
+) -> Generator[tuple[str, str], None, None]:
+    """Iterate NDJSON events from a running CLI process.
+
+    Yields (event_type, payload) tuples:
+        ("text",       "<chunk>")       — assistant text delta
+        ("tool",       "<description>") — tool activity indicator
+        ("session_id", "<id>")          — CLI session id (for --resume)
+        ("error",      "<message>")     — error detail
+        ("done",       "<exit_code>")   — stream finished
+    """
     session_id: str | None = None
     accumulated = ""
     try:
@@ -141,7 +164,6 @@ def stream_response(
                     text = item.get("text", "")
                     if item.get("type") == "text" and text:
                         if accumulated and text.startswith(accumulated):
-                            # Final complete message — skip the already-streamed part
                             new_part = text[len(accumulated):]
                             if new_part:
                                 accumulated += new_part
@@ -164,11 +186,26 @@ def stream_response(
     except Exception as exc:
         yield ("error", str(exc))
     finally:
-        if process.poll() is None:
-            process.terminate()
+        kill_process(process)
 
     rc = process.returncode if process.returncode is not None else 1
     yield ("done", str(rc))
+
+
+def stream_response(
+    prompt: str,
+    cwd: str | Path | None = None,
+    model: str | None = None,
+    mode: str = "agent",
+    resume_session: str | None = None,
+) -> Generator[tuple[str, str], None, None]:
+    """Convenience wrapper: create_process + iter_events."""
+    process, err = create_process(prompt, cwd, model, mode, resume_session)
+    if err:
+        yield ("error", err)
+        yield ("done", "1")
+        return
+    yield from iter_events(process)
 
 
 # ---------------------------------------------------------------------------

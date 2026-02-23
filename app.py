@@ -162,6 +162,24 @@ def relative_time(ts: float) -> str:
     return datetime.fromtimestamp(ts).strftime("%m/%d")
 
 
+# ── Clean up interrupted streaming (e.g. user clicked Stop) ──────────────────
+
+if "_streaming_proc" in st.session_state:
+    proc = st.session_state.pop("_streaming_proc")
+    cursor_cli.kill_process(proc)
+
+    partial = st.session_state.pop("_partial_response", "")
+    cid = st.session_state.pop("_streaming_conv_id", None)
+    if partial and cid:
+        db.add_message(cid, "assistant", partial + "\n\n*(generation stopped)*")
+
+    title_prompt = st.session_state.pop("_streaming_auto_title_prompt", None)
+    if title_prompt and cid:
+        user_msgs = [m for m in db.get_messages(cid) if m["role"] == "user"]
+        if len(user_msgs) == 1:
+            db.update_title(cid, auto_title(title_prompt))
+
+
 # ── Page config & CSS ────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="Instrument GPT", page_icon="🔬", layout="wide")
@@ -372,21 +390,41 @@ if prompt := st.chat_input("Ask anything…"):
     with st.expander("Debug: actual prompt sent", expanded=False):
         st.code(enriched, language="markdown")
 
+    # Start the CLI process
+    process, proc_err = cursor_cli.create_process(
+        prompt=enriched,
+        cwd=settings.get("cwd"),
+        model=settings.get("model") or None,
+        mode=settings.get("mode", "agent"),
+        resume_session=cli_session,
+    )
+
+    if proc_err:
+        with st.chat_message("assistant"):
+            st.markdown(f"**Error:** {proc_err}")
+            full_response = f"**Error:** {proc_err}"
+            db.add_message(conv_id, "assistant", full_response)
+        st.rerun()
+
+    # Save process to session state so the cleanup block can kill it on rerun
+    st.session_state._streaming_proc = process
+    st.session_state._streaming_conv_id = conv_id
+    st.session_state._partial_response = ""
+    st.session_state._streaming_auto_title_prompt = prompt
+
     # Stream the assistant response
     with st.chat_message("assistant"):
         response_area = st.empty()
         tool_area = st.empty()
+        stop_area = st.empty()
         full_response = ""
 
-        for evt_type, payload in cursor_cli.stream_response(
-            prompt=enriched,
-            cwd=settings.get("cwd"),
-            model=settings.get("model") or None,
-            mode=settings.get("mode", "agent"),
-            resume_session=cli_session,
-        ):
+        stop_area.button("⏹ Stop generating", key="stop_gen", type="secondary")
+
+        for evt_type, payload in cursor_cli.iter_events(process):
             if evt_type == "text":
                 full_response += payload
+                st.session_state._partial_response = full_response
                 response_area.markdown(full_response + "▌")
 
             elif evt_type == "tool":
@@ -403,9 +441,16 @@ if prompt := st.chat_input("Ask anything…"):
 
             elif evt_type == "done":
                 tool_area.empty()
+                stop_area.empty()
                 response_area.markdown(
                     full_response or "_No response received._"
                 )
+
+    # Normal completion — clear streaming state
+    st.session_state.pop("_streaming_proc", None)
+    st.session_state.pop("_streaming_conv_id", None)
+    st.session_state.pop("_partial_response", None)
+    st.session_state.pop("_streaming_auto_title_prompt", None)
 
     # Persist the assistant reply
     if full_response:
