@@ -152,6 +152,59 @@ def build_context_prompt(
     )
 
 
+_IMAGE_MARKER = "<!-- ATTACHED_IMAGES:"
+_IMAGE_EXT_RE = re.compile(r'[\w.\-]+\.(?:png|jpg|jpeg|svg)', re.IGNORECASE)
+
+
+def _find_new_images(cwd: str, since: float, response_text: str) -> list[str]:
+    """Find images created during this request via timestamp scan + response parsing."""
+    found: list[str] = []
+    if not cwd or not os.path.isdir(cwd):
+        return found
+    seen: set[str] = set()
+
+    for ext in ("*.png", "*.jpg", "*.jpeg", "*.svg"):
+        for p in glob.glob(os.path.join(cwd, "**", ext), recursive=True):
+            ap = os.path.abspath(p)
+            if ap not in seen and os.path.getmtime(p) > since:
+                seen.add(ap)
+                found.append(ap)
+
+    for name in _IMAGE_EXT_RE.findall(response_text):
+        for p in glob.glob(os.path.join(cwd, "**", name), recursive=True):
+            ap = os.path.abspath(p)
+            if ap not in seen:
+                seen.add(ap)
+                found.append(ap)
+
+    found.sort(key=lambda p: os.path.getmtime(p))
+    return found
+
+
+def _attach_images(content: str, image_paths: list[str]) -> str:
+    if not image_paths:
+        return content
+    return f"{content}\n{_IMAGE_MARKER}{'|'.join(image_paths)} -->"
+
+
+def _split_images(content: str) -> tuple[str, list[str]]:
+    if _IMAGE_MARKER not in content:
+        return content, []
+    idx = content.index(_IMAGE_MARKER)
+    text = content[:idx].rstrip()
+    marker = content[idx:]
+    paths_str = marker[len(_IMAGE_MARKER):-len(" -->")].strip()
+    return text, paths_str.split("|") if paths_str else []
+
+
+def _render_message(content: str):
+    text, image_paths = _split_images(content)
+    st.markdown(text)
+    for img_path in image_paths:
+        if os.path.isfile(img_path):
+            st.image(img_path, caption=os.path.basename(img_path))
+
+
 def relative_time(ts: float) -> str:
     diff = time.time() - ts
     if diff < 60:
@@ -360,7 +413,7 @@ if not conv_id:
 # Render existing messages
 for msg in messages:
     with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+        _render_message(msg["content"])
 
 # ── Chat input & streaming response ─────────────────────────────────────────
 
@@ -450,18 +503,13 @@ if prompt := st.chat_input("Ask anything…"):
                 )
 
         # Display any images the agent created during this request
-        cwd = settings.get("cwd", "")
-        if cwd and os.path.isdir(cwd):
-            new_images = []
-            for ext in ("*.png", "*.jpg", "*.jpeg", "*.svg"):
-                for img_path in glob.glob(
-                    os.path.join(cwd, "**", ext), recursive=True
-                ):
-                    if os.path.getmtime(img_path) > request_start_time:
-                        new_images.append(img_path)
-            new_images.sort(key=os.path.getmtime)
-            for img_path in new_images:
-                st.image(img_path, caption=os.path.basename(img_path))
+        new_images = _find_new_images(
+            settings.get("cwd", ""), request_start_time, full_response,
+        )
+        for img_path in new_images:
+            st.image(img_path, caption=os.path.basename(img_path))
+        if new_images:
+            full_response = _attach_images(full_response, new_images)
 
     # Normal completion — clear streaming state
     st.session_state.pop("_streaming_proc", None)
