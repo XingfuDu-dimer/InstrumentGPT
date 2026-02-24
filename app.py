@@ -24,6 +24,7 @@ import streamlit as st
 
 import db
 import cursor_cli
+import memory
 
 ROOT = Path(__file__).resolve().parent
 
@@ -617,10 +618,25 @@ if prompt := st.chat_input("Ask anything…"):
     enriched = enrich_prompt(prompt, settings.get("mdc_tag", ""))
     cli_session = conv_info.get("cli_session_id") if conv_info else None
 
-    # Always prepend conversation history for context
-    # (--resume alone is not reliable enough in print mode)
+    # Load memory and build structured context
+    existing_summary, state_json = db.get_memory(conv_id)
+    diag_state = memory.DiagnosticState.deserialize(state_json)
+
+    ip_result = _extract_ip(prompt)
+    if ip_result:
+        diag_state.device_ip = ip_result[0]
+        diag_state.device_name = f"zspr {ip_result[1]}"
+
     if messages:
-        enriched = build_context_prompt(messages, enriched, prompt)
+        enriched, updated_summary = memory.build_prompt(
+            current_question=enriched,
+            all_messages=messages,
+            diagnostic_state=diag_state,
+            existing_summary=existing_summary,
+            is_device_query=_has_device(prompt),
+        )
+    else:
+        updated_summary = existing_summary
 
     # Debug: show the actual prompt sent to CLI
     with st.expander("Debug: actual prompt sent", expanded=False):
@@ -709,6 +725,10 @@ if prompt := st.chat_input("Ask anything…"):
     # Persist the assistant reply
     if full_response:
         db.add_message(conv_id, "assistant", full_response)
+
+    # Update diagnostic state from the response
+    diag_state = memory.extract_state_updates(full_response, diag_state)
+    db.update_memory(conv_id, updated_summary, diag_state.serialize())
 
     # Auto-title from first user message
     user_msgs = [m for m in db.get_messages(conv_id) if m["role"] == "user"]

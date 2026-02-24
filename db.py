@@ -48,6 +48,14 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_msg_conv
                 ON messages(conversation_id, created_at ASC);
         """)
+        # Migration: add memory columns if they don't exist
+        for col, default in (("summary", "''"), ("diagnostic_state", "''")):
+            try:
+                conn.execute(
+                    f"ALTER TABLE conversations ADD COLUMN {col} TEXT DEFAULT {default}"
+                )
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
 
 def create_conversation(ip_address: str, title: str = "New Chat") -> str:
@@ -124,6 +132,28 @@ def update_cli_session(conversation_id: str, cli_session_id: str):
         conn.execute(
             "UPDATE conversations SET cli_session_id = ? WHERE id = ?",
             (cli_session_id, conversation_id),
+        )
+
+
+def get_memory(conversation_id: str) -> tuple[str, str]:
+    """Return (summary, diagnostic_state_json) for a conversation."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT summary, diagnostic_state "
+            "FROM conversations WHERE id = ?",
+            (conversation_id,),
+        ).fetchone()
+    if not row:
+        return "", ""
+    return row["summary"] or "", row["diagnostic_state"] or ""
+
+
+def update_memory(conversation_id: str, summary: str, diagnostic_state: str):
+    """Persist updated summary and diagnostic state."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE conversations SET summary = ?, diagnostic_state = ? WHERE id = ?",
+            (summary, diagnostic_state, conversation_id),
         )
 
 
