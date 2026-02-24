@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parent
 # Default cwd: env INSTRUMENT_CWD at start, else ROOT
 DEFAULT_CWD = os.environ.get("INSTRUMENT_CWD")
 if not DEFAULT_CWD or not Path(DEFAULT_CWD).exists():
-    DEFAULT_CWD = str(ROOT)
+    DEFAULT_CWD = r"C:\Users\XingfuDu\Desktop\Instrument"
 
 DEFAULT_MODEL = ""
 DEFAULT_MODE = "agent"
