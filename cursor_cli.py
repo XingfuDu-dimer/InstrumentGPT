@@ -168,6 +168,10 @@ def iter_events(
                             if new_part:
                                 accumulated += new_part
                                 yield ("text", new_part)
+                        elif accumulated and text in accumulated:
+                            pass  # already seen (subset of accumulated)
+                        elif accumulated and accumulated.startswith(text):
+                            pass  # partial re-send of already accumulated text
                         else:
                             accumulated += text
                             yield ("text", text)
