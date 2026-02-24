@@ -498,7 +498,7 @@ with st.sidebar:
 | zspr 054 | 10.1.1.49 |
 | zspr 055 | 10.1.1.50 |
 
-You can refer to a device by IP (e.g. `10.1.1.47`), device name (e.g. `zspr 052`, `052`, `52`), or just the last octet (e.g. `47`).
+You can refer to a device by IP (e.g. `10.1.1.47`).
 
 ---
 
