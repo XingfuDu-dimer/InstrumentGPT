@@ -681,6 +681,11 @@ if prompt := st.chat_input("Ask anything…"):
                 st.session_state._partial_response = full_response
                 response_area.markdown(full_response + "▌")
 
+            elif evt_type == "text_replace":
+                full_response = payload
+                st.session_state._partial_response = full_response
+                response_area.markdown(full_response + "▌")
+
             elif evt_type == "tool":
                 tool_area.markdown(
                     f'<p class="tool-ind">🔧 {payload}</p>',

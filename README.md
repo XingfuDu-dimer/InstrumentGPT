@@ -83,3 +83,6 @@ The app also looks for `agent.exe` in `%USERPROFILE%\.cursor\bin` and under `%LO
 | `db.py` | SQLite schema and access for conversations & messages |
 | `requirements.txt` | Python dependencies |
 | `data/` | Auto-created; contains `conversations.db` |
+
+$env:INSTRUMENT_DEBUG_NDJSON = "1"
+streamlit run app.py

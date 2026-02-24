@@ -11,13 +11,30 @@ Stream-json event types (NDJSON, one JSON object per line):
 
 To fix "agent not found" when PATH differs (e.g. Streamlit started from IDE):
   Set INSTRUMENT_AGENT_PATH to the full path to the agent executable.
+
+Debug logging:
+  Set env INSTRUMENT_DEBUG_NDJSON=1 to write raw NDJSON lines to
+  data/debug_ndjson/<timestamp>.jsonl for protocol analysis.
 """
 import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Generator
+
+_ROOT = Path(__file__).resolve().parent
+
+
+def _open_debug_log():
+    """Open a debug NDJSON log file if INSTRUMENT_DEBUG_NDJSON is set."""
+    if not os.environ.get("INSTRUMENT_DEBUG_NDJSON"):
+        return None
+    log_dir = _ROOT / "data" / "debug_ndjson"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"{int(time.time())}.jsonl"
+    return open(log_path, "w", encoding="utf-8")
 
 
 def _find_agent_cmd() -> str:
@@ -134,19 +151,30 @@ def iter_events(
     """Iterate NDJSON events from a running CLI process.
 
     Yields (event_type, payload) tuples:
-        ("text",       "<chunk>")       — assistant text delta
-        ("tool",       "<description>") — tool activity indicator
-        ("session_id", "<id>")          — CLI session id (for --resume)
-        ("error",      "<message>")     — error detail
-        ("done",       "<exit_code>")   — stream finished
+        ("text",         "<chunk>")   — assistant text delta (append)
+        ("text_replace", "<full>")    — complete text replacing accumulated
+        ("tool",         "<desc>")    — tool activity indicator
+        ("session_id",   "<id>")      — CLI session id (for --resume)
+        ("error",        "<message>") — error detail
+        ("done",         "<exit>")    — stream finished
+
+    The CLI with --stream-partial-output sends a mix of:
+      - Small deltas during streaming
+      - Cumulative full-text events (text that startswith accumulated)
+      - A final complete message at the end
+    We handle all three and deduplicate automatically.
     """
     session_id: str | None = None
     accumulated = ""
+    dbg = _open_debug_log()
     try:
         for raw_line in process.stdout:
             line = raw_line.strip()
             if not line:
                 continue
+            if dbg:
+                dbg.write(line + "\n")
+                dbg.flush()
 
             try:
                 data = json.loads(line)
@@ -162,19 +190,29 @@ def iter_events(
             if evt == "assistant":
                 for item in data.get("message", {}).get("content", []):
                     text = item.get("text", "")
-                    if item.get("type") == "text" and text:
-                        if accumulated and text.startswith(accumulated):
-                            new_part = text[len(accumulated):]
-                            if new_part:
-                                accumulated += new_part
-                                yield ("text", new_part)
-                        elif accumulated and text in accumulated:
-                            pass  # already seen (subset of accumulated)
-                        elif accumulated and accumulated.startswith(text):
-                            pass  # partial re-send of already accumulated text
-                        else:
-                            accumulated += text
-                            yield ("text", text)
+                    if item.get("type") != "text" or not text:
+                        continue
+
+                    if not accumulated:
+                        accumulated = text
+                        yield ("text", text)
+                    elif text.startswith(accumulated):
+                        # Cumulative event — extract the new tail
+                        new_part = text[len(accumulated):]
+                        if new_part:
+                            accumulated = text
+                            yield ("text", new_part)
+                    elif accumulated.startswith(text) or text in accumulated:
+                        pass  # subset of what we already have
+                    elif len(text) >= len(accumulated) * 0.5 and len(text) > 100:
+                        # Final complete re-send (possibly cleaner than
+                        # the streamed version). Replace.
+                        accumulated = text
+                        yield ("text_replace", text)
+                    else:
+                        # Genuine new delta
+                        accumulated += text
+                        yield ("text", text)
 
             elif evt == "tool_call" and data.get("subtype") == "started":
                 desc = _describe_tool_call(data.get("tool_call", {}))
@@ -191,6 +229,8 @@ def iter_events(
         yield ("error", str(exc))
     finally:
         kill_process(process)
+        if dbg:
+            dbg.close()
 
     rc = process.returncode if process.returncode is not None else 1
     yield ("done", str(rc))
