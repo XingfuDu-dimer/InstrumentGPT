@@ -11,8 +11,8 @@ Default working directory for Cursor CLI:
 """
 import html
 import os
-import threading
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import streamlit as st
@@ -80,55 +80,10 @@ def get_client_ip() -> str:
     return "127.0.0.1"
 
 
-def _stream_worker(conv_id: str, process, session_state_ref):
-    """Background thread: consume CLI events and update session_state._streaming_data."""
-    partial = ""
-    session_id = None
-    last_tool = ""
-    try:
-        for evt_type, payload in cursor_cli.iter_events(process):
-            if session_state_ref.get("_user_stopped_streaming"):
-                break
-            if evt_type == "text":
-                partial += payload
-            elif evt_type == "text_replace":
-                partial = payload
-            elif evt_type == "tool":
-                last_tool = payload
-            elif evt_type == "session_id":
-                session_id = payload
-                db.update_cli_session(conv_id, payload)
-            elif evt_type == "error" and not partial:
-                partial = f"**Error:** {payload}"
-            elif evt_type == "done":
-                break
-            # Update shared state
-            if "_streaming_data" not in session_state_ref:
-                session_state_ref["_streaming_data"] = {}
-            session_state_ref["_streaming_data"][conv_id] = {
-                "partial": partial,
-                "session_id": session_id,
-                "tool": last_tool,
-                "done": evt_type == "done",
-                "returncode": int(payload) if evt_type == "done" else None,
-            }
-    except Exception as e:
-        if "_streaming_data" not in session_state_ref:
-            session_state_ref["_streaming_data"] = {}
-        session_state_ref["_streaming_data"][conv_id] = {
-            "partial": partial + (f"\n\n**Error:** {e}" if not partial else ""),
-            "session_id": session_id,
-            "tool": last_tool,
-            "done": True,
-            "returncode": 1,
-        }
+# ── Clean up interrupted streaming (e.g. page refresh during stream) ───────────
+# With sync streaming we rarely hit this; handles stale state from refresh
 
-
-# ── Clean up streaming only when user clicked Stop (not when switching conv) ───
-# When switching conversations, we do NOT kill — process keeps running in background thread.
-
-if st.session_state.get("_user_stopped_streaming") and "_streaming_proc" in st.session_state:
-    st.session_state.pop("_user_stopped_streaming", None)
+if "_streaming_proc" in st.session_state:
     proc = st.session_state.pop("_streaming_proc")
     cursor_cli.kill_process(proc)
 
@@ -161,9 +116,6 @@ if "settings" not in st.session_state:
         "mdc_tag": DEFAULT_MDC_TAG,
         "cwd": DEFAULT_CWD,
     }
-
-if "_streaming_data" not in st.session_state:
-    st.session_state._streaming_data = {}
 
 client_ip = get_client_ip()
 
@@ -316,104 +268,41 @@ if not conv_id:
     )
 
 # Render existing messages with per-answer like
+# Use fragment to auto-refresh like status when summarization is in progress
 cwd = st.session_state.settings.get("cwd", "")
-liked_by_msg = db.get_liked_entries_for_conversation(conv_id) if conv_id else {}
+_has_pending = False
+if conv_id:
+    _liked = db.get_liked_entries_for_conversation(conv_id)
+    _has_pending = any(e.get("status") in ("pending", "summarizing") for e in _liked.values())
 
-for msg in messages:
-    with st.chat_message(msg["role"]):
-        media_utils.render_message(msg["content"])
-        # Like button for assistant messages only
-        if conv_id and msg["role"] == "assistant" and "id" in msg:
-            mid = msg["id"]
-            entry = liked_by_msg.get(mid)
-            if not entry:
-                if st.button("👍", key=f"like_{mid}", help="Add to knowledge base", type="secondary"):
-                    ok, m = knowledge.start_summarization(conv_id, mid, cwd)
-                    st.toast(m)
-                    st.rerun()
-            elif entry["status"] in ("pending", "summarizing"):
-                if st.button("👍 … ✕", key=f"cancel_{mid}", help="Cancel summarization"):
-                    ok, m = knowledge.cancel_or_unlike(conv_id, mid)
-                    st.toast(m)
-                    st.rerun()
-            else:
-                if st.button("✓", key=f"unlike_{mid}", help="In base · click to remove", type="secondary"):
-                    ok, m = knowledge.cancel_or_unlike(conv_id, mid)
-                    st.toast(m)
-                    st.rerun()
 
-# ── Streaming UI (when viewing a conv that has an active background stream) ───
+@st.fragment(run_every=timedelta(seconds=2) if _has_pending else None)
+def _messages_with_likes():
+    liked = db.get_liked_entries_for_conversation(conv_id) if conv_id else {}
+    for msg in messages:
+        with st.chat_message(msg["role"]):
+            media_utils.render_message(msg["content"])
+            if conv_id and msg["role"] == "assistant" and "id" in msg:
+                mid = msg["id"]
+                entry = liked.get(mid)
+                if not entry:
+                    if st.button("👍", key=f"like_{mid}", help="Add to knowledge base", type="secondary"):
+                        ok, m = knowledge.start_summarization(conv_id, mid, cwd)
+                        st.toast(m)
+                        st.rerun()
+                elif entry["status"] in ("pending", "summarizing"):
+                    if st.button("👍 … ✕", key=f"cancel_{mid}", help="Cancel summarization"):
+                        ok, m = knowledge.cancel_or_unlike(conv_id, mid)
+                        st.toast(m)
+                        st.rerun()
+                else:
+                    if st.button("✓", key=f"unlike_{mid}", help="In base · click to remove", type="secondary"):
+                        ok, m = knowledge.cancel_or_unlike(conv_id, mid)
+                        st.toast(m)
+                        st.rerun()
 
-_streaming_cid = st.session_state.get("_streaming_conv_id")
-_viewing_streaming = conv_id and _streaming_cid == conv_id
 
-if _viewing_streaming and "_streaming_proc" in st.session_state:
-    stream_data = st.session_state._streaming_data.get(conv_id, {})
-    partial = stream_data.get("partial", "")
-    tool_desc = stream_data.get("tool", "")
-    done = stream_data.get("done", False)
-
-    with st.chat_message("assistant"):
-        response_area = st.empty()
-        tool_area = st.empty()
-        stop_area = st.empty()
-        response_area.markdown((partial or "") + ("▌" if not done else ""))
-        if tool_desc:
-            tool_area.markdown(
-                f'<p class="tool-ind">🔧 {tool_desc}</p>',
-                unsafe_allow_html=True,
-            )
-
-        if st.button("⏹ Stop", key="stop_gen", type="secondary"):
-            st.session_state._user_stopped_streaming = True
-            st.rerun()
-
-    if not done:
-        time.sleep(0.4)
-        st.rerun()
-    else:
-        # Stream finished — finalize
-        full_response = partial
-        title_prompt = st.session_state.get("_streaming_auto_title_prompt", "")
-        request_start_time = st.session_state.get("_streaming_start_time", time.time())
-        st.session_state.pop("_streaming_proc", None)
-        st.session_state.pop("_streaming_conv_id", None)
-        st.session_state.pop("_streaming_auto_title_prompt", None)
-        st.session_state.pop("_streaming_start_time", None)
-        if conv_id in st.session_state.get("_streaming_data", {}):
-            st.session_state._streaming_data.pop(conv_id, None)
-
-        # Plotly/images first, then persist with attached refs
-        settings = st.session_state.settings
-        plotly_cache, plotly_fig = media_utils.try_interactive_plot(
-            settings.get("cwd", ""), full_response,
-        )
-        if plotly_fig:
-            st.plotly_chart(plotly_fig, use_container_width=True, key=f"plotly_live_{conv_id}")
-            full_response = media_utils.attach_plotly(full_response, plotly_cache)
-        else:
-            new_images = media_utils.find_new_images(
-                settings.get("cwd", ""), request_start_time, full_response,
-            )
-            for img_path in new_images:
-                st.image(img_path, caption=os.path.basename(img_path))
-            if new_images:
-                full_response = media_utils.attach_images(full_response, new_images)
-
-        if full_response:
-            db.add_message(conv_id, "assistant", full_response)
-
-        # Update memory/diagnostic state
-        existing_summary, state_json = db.get_memory(conv_id)
-        diag_state = memory.DiagnosticState.deserialize(state_json)
-        diag_state = memory.extract_state_updates(full_response, diag_state)
-        db.update_memory(conv_id, existing_summary, diag_state.serialize())
-
-        user_msgs = [m for m in db.get_messages(conv_id) if m["role"] == "user"]
-        if len(user_msgs) == 1 and title_prompt:
-            db.update_title(conv_id, prompt_utils.auto_title(title_prompt))
-
-        st.rerun()
+_messages_with_likes()
 
 # ── Chat input & streaming response ─────────────────────────────────────────
 
@@ -476,23 +365,78 @@ if prompt := st.chat_input("Ask anything…"):
             db.add_message(conv_id, "assistant", f"**Error:** {proc_err}")
         st.rerun()
 
-    # Start background stream thread (process keeps running when user switches conv)
-    st.session_state._streaming_data[conv_id] = {"partial": "", "done": False}
-    t = threading.Thread(
-        target=_stream_worker,
-        args=(conv_id, process, st.session_state),
-        daemon=True,
-    )
-    t.start()
-
+    # Stream in main thread (sync)
     st.session_state._streaming_proc = process
     st.session_state._streaming_conv_id = conv_id
+    st.session_state._partial_response = ""
     st.session_state._streaming_auto_title_prompt = prompt
-    st.session_state._streaming_start_time = request_start_time
 
-    st.rerun()
+    with st.chat_message("assistant"):
+        response_area = st.empty()
+        tool_area = st.empty()
+        stop_area = st.empty()
+        full_response = ""
 
-# Poll when viewing a conv with pending summarization (auto-refresh when done)
-if conv_id and any(e.get("status") in ("pending", "summarizing") for e in liked_by_msg.values()):
-    time.sleep(2)
+        stop_area.button("⏹ Stop", key="stop_gen", type="secondary")
+
+        for evt_type, payload in cursor_cli.iter_events(process):
+            if evt_type == "text":
+                full_response += payload
+                st.session_state._partial_response = full_response
+                response_area.markdown(full_response + "▌")
+
+            elif evt_type == "text_replace":
+                full_response = payload
+                st.session_state._partial_response = full_response
+                response_area.markdown(full_response + "▌")
+
+            elif evt_type == "tool":
+                tool_area.markdown(
+                    f'<p class="tool-ind">🔧 {payload}</p>',
+                    unsafe_allow_html=True,
+                )
+
+            elif evt_type == "session_id":
+                db.update_cli_session(conv_id, payload)
+
+            elif evt_type == "error" and not full_response:
+                full_response = f"**Error:** {payload}"
+
+            elif evt_type == "done":
+                tool_area.empty()
+                stop_area.empty()
+                response_area.markdown(full_response or "_No response received._")
+
+        # Plotly/images
+        plotly_cache, plotly_fig = media_utils.try_interactive_plot(
+            settings.get("cwd", ""), full_response,
+        )
+        if plotly_fig:
+            st.plotly_chart(plotly_fig, use_container_width=True, key=f"plotly_live_{conv_id}")
+            full_response = media_utils.attach_plotly(full_response, plotly_cache)
+        else:
+            new_images = media_utils.find_new_images(
+                settings.get("cwd", ""), request_start_time, full_response,
+            )
+            for img_path in new_images:
+                st.image(img_path, caption=os.path.basename(img_path))
+            if new_images:
+                full_response = media_utils.attach_images(full_response, new_images)
+
+    # Clear streaming state
+    st.session_state.pop("_streaming_proc", None)
+    st.session_state.pop("_streaming_conv_id", None)
+    st.session_state.pop("_partial_response", None)
+    st.session_state.pop("_streaming_auto_title_prompt", None)
+
+    if full_response:
+        db.add_message(conv_id, "assistant", full_response)
+
+    diag_state = memory.extract_state_updates(full_response, diag_state)
+    db.update_memory(conv_id, updated_summary, diag_state.serialize())
+
+    user_msgs = [m for m in db.get_messages(conv_id) if m["role"] == "user"]
+    if len(user_msgs) == 1:
+        db.update_title(conv_id, prompt_utils.auto_title(prompt))
+
     st.rerun()
