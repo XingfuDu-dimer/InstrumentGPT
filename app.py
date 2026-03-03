@@ -342,66 +342,63 @@ _share_path = st.session_state.pop("_copy_share", None)
 if _share_path:
     _qs = _share_path.split("?", 1)[1] if "?" in _share_path else ""
     st.components.v1.html(
-        f"""
-        <div id="dbg" style="font-family:monospace;font-size:11px;color:#888;white-space:pre-wrap;"></div>
-        <script>
+        f"""<script>
         (function(){{
-            var d = document.getElementById("dbg");
-            function log(s){{ d.textContent += s + "\\n"; console.log("[share-dbg] " + s); }}
-
             var qs = "?{_qs}";
+            var pdoc = window.parent.document;
             var origin = "";
-            try {{ origin = window.parent.location.origin; log("parent origin: " + origin); }} catch(e1) {{
-                log("parent origin BLOCKED: " + e1);
-                try {{ origin = window.top.location.origin; log("top origin: " + origin); }} catch(e2) {{
-                    log("top origin BLOCKED: " + e2);
-                    origin = window.location.origin;
-                    log("self origin (fallback): " + origin);
-                }}
+            try {{ origin = window.parent.location.origin; }} catch(e) {{
+                origin = window.location.origin;
             }}
             var url = origin + "/" + qs;
-            log("url to copy: " + url);
 
-            function fallbackCopy(text) {{
-                var ta = document.createElement("textarea");
-                ta.value = text;
-                ta.style.position = "fixed";
-                ta.style.left = "-9999px";
-                document.body.appendChild(ta);
-                ta.focus();
-                ta.select();
-                var ok = document.execCommand("copy");
-                log("fallbackCopy execCommand result: " + ok);
-                document.body.removeChild(ta);
-            }}
+            var old = pdoc.getElementById("share-copy-bar");
+            if (old) old.remove();
 
-            log("navigator.clipboard exists: " + !!navigator.clipboard);
-            log("navigator.clipboard.writeText exists: " + !!(navigator.clipboard && navigator.clipboard.writeText));
-            log("isSecureContext: " + window.isSecureContext);
-            log("document.hasFocus(): " + document.hasFocus());
-            log("protocol: " + window.location.protocol);
+            var bar = pdoc.createElement("div");
+            bar.id = "share-copy-bar";
+            bar.style.cssText = "position:fixed;bottom:0;left:0;right:0;padding:10px 20px;background:#262730;display:flex;align-items:center;gap:10px;z-index:999999;font-family:sans-serif;box-shadow:0 -2px 12px rgba(0,0,0,0.3);animation:slideUp .2s ease;";
 
-            window.focus();
-            setTimeout(function(){{
-                log("after timeout – document.hasFocus(): " + document.hasFocus());
-                if (navigator.clipboard && navigator.clipboard.writeText) {{
-                    navigator.clipboard.writeText(url).then(function(){{
-                        log("clipboard.writeText SUCCESS");
-                    }}).catch(function(err){{
-                        log("clipboard.writeText FAILED: " + err);
-                        log("trying fallback...");
-                        fallbackCopy(url);
-                    }});
-                }} else {{
-                    log("no clipboard API, using fallback");
-                    fallbackCopy(url);
+            var style = pdoc.createElement("style");
+            style.textContent = "@keyframes slideUp{{from{{transform:translateY(100%)}}to{{transform:translateY(0)}}}}";
+            bar.appendChild(style);
+
+            var inp = pdoc.createElement("input");
+            inp.type = "text";
+            inp.readOnly = true;
+            inp.value = url;
+            inp.style.cssText = "flex:1;padding:6px 10px;border:1px solid #555;border-radius:4px;font-size:13px;font-family:monospace;color:#fafafa;background:#0e1117;outline:none;";
+            bar.appendChild(inp);
+
+            var copyBtn = pdoc.createElement("button");
+            copyBtn.textContent = "Copy";
+            copyBtn.style.cssText = "padding:6px 18px;background:#ff4b4b;color:#fff;border:none;border-radius:4px;font-size:13px;cursor:pointer;font-weight:500;white-space:nowrap;";
+            copyBtn.onclick = function() {{
+                inp.focus();
+                inp.select();
+                inp.setSelectionRange(0, 99999);
+                var ok = pdoc.execCommand("copy");
+                if (!ok && window.parent.navigator.clipboard) {{
+                    window.parent.navigator.clipboard.writeText(url).catch(function(){{}});
                 }}
-            }}, 500);
+                copyBtn.textContent = "Copied!";
+                copyBtn.style.background = "#28a745";
+                setTimeout(function(){{ bar.remove(); }}, 800);
+            }};
+            bar.appendChild(copyBtn);
+
+            var closeBtn = pdoc.createElement("button");
+            closeBtn.textContent = "✕";
+            closeBtn.style.cssText = "padding:4px 8px;background:none;color:#aaa;border:none;font-size:16px;cursor:pointer;";
+            closeBtn.onclick = function(){{ bar.remove(); }};
+            bar.appendChild(closeBtn);
+
+            pdoc.body.appendChild(bar);
+            setTimeout(function(){{ inp.focus(); inp.select(); }}, 100);
         }})();
         </script>""",
-        height=200,
+        height=0,
     )
-    st.toast("Share link copied!")
 
 # ── Chat input & streaming response ─────────────────────────────────────────
 
