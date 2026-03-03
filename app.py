@@ -342,14 +342,26 @@ _share_path = st.session_state.pop("_copy_share", None)
 if _share_path:
     _qs = _share_path.split("?", 1)[1] if "?" in _share_path else ""
     st.components.v1.html(
-        f"""<script>
+        f"""
+        <div id="dbg" style="font-family:monospace;font-size:11px;color:#888;white-space:pre-wrap;"></div>
+        <script>
         (function(){{
+            var d = document.getElementById("dbg");
+            function log(s){{ d.textContent += s + "\\n"; console.log("[share-dbg] " + s); }}
+
             var qs = "?{_qs}";
             var origin = "";
-            try {{ origin = (window.top || window.parent || window).location.origin; }} catch(e) {{
-                origin = window.location.origin;
+            try {{ origin = window.parent.location.origin; log("parent origin: " + origin); }} catch(e1) {{
+                log("parent origin BLOCKED: " + e1);
+                try {{ origin = window.top.location.origin; log("top origin: " + origin); }} catch(e2) {{
+                    log("top origin BLOCKED: " + e2);
+                    origin = window.location.origin;
+                    log("self origin (fallback): " + origin);
+                }}
             }}
             var url = origin + "/" + qs;
+            log("url to copy: " + url);
+
             function fallbackCopy(text) {{
                 var ta = document.createElement("textarea");
                 ta.value = text;
@@ -358,20 +370,36 @@ if _share_path:
                 document.body.appendChild(ta);
                 ta.focus();
                 ta.select();
-                document.execCommand("copy");
+                var ok = document.execCommand("copy");
+                log("fallbackCopy execCommand result: " + ok);
                 document.body.removeChild(ta);
             }}
+
+            log("navigator.clipboard exists: " + !!navigator.clipboard);
+            log("navigator.clipboard.writeText exists: " + !!(navigator.clipboard && navigator.clipboard.writeText));
+            log("isSecureContext: " + window.isSecureContext);
+            log("document.hasFocus(): " + document.hasFocus());
+            log("protocol: " + window.location.protocol);
+
             window.focus();
             setTimeout(function(){{
+                log("after timeout – document.hasFocus(): " + document.hasFocus());
                 if (navigator.clipboard && navigator.clipboard.writeText) {{
-                    navigator.clipboard.writeText(url).catch(function(){{ fallbackCopy(url); }});
+                    navigator.clipboard.writeText(url).then(function(){{
+                        log("clipboard.writeText SUCCESS");
+                    }}).catch(function(err){{
+                        log("clipboard.writeText FAILED: " + err);
+                        log("trying fallback...");
+                        fallbackCopy(url);
+                    }});
                 }} else {{
+                    log("no clipboard API, using fallback");
                     fallbackCopy(url);
                 }}
-            }}, 300);
+            }}, 500);
         }})();
         </script>""",
-        height=0,
+        height=200,
     )
     st.toast("Share link copied!")
 
