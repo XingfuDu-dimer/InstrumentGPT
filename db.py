@@ -151,6 +151,29 @@ def get_messages(conversation_id: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_qa_pair(conversation_id: str, answer_id: int) -> list[dict]:
+    """Return the user question immediately before answer_id and the answer itself."""
+    with get_conn() as conn:
+        answer = conn.execute(
+            "SELECT id, role, content, created_at "
+            "FROM messages WHERE conversation_id = ? AND id = ? AND role = 'assistant'",
+            (conversation_id, answer_id),
+        ).fetchone()
+        if not answer:
+            return []
+        question = conn.execute(
+            "SELECT id, role, content, created_at "
+            "FROM messages WHERE conversation_id = ? AND id < ? AND role = 'user' "
+            "ORDER BY id DESC LIMIT 1",
+            (conversation_id, answer_id),
+        ).fetchone()
+        result = []
+        if question:
+            result.append(dict(question))
+        result.append(dict(answer))
+        return result
+
+
 def get_messages_up_to(conversation_id: str, last_message_id: int) -> list[dict]:
     """Get messages from start up to and including last_message_id."""
     with get_conn() as conn:

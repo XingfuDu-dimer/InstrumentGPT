@@ -68,6 +68,22 @@ _MODEL_LABELS = {
 db.init_db()
 
 
+def _get_server_ip() -> str:
+    """Get this machine's LAN IP for shareable links."""
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "localhost"
+
+
+SERVER_IP = _get_server_ip()
+
+
 def get_client_ip() -> str:
     try:
         ctx = getattr(st, "context", None)
@@ -101,13 +117,30 @@ if "_streaming_proc" in st.session_state:
 
 # ── Page config & CSS ────────────────────────────────────────────────────────
 
-st.set_page_config(page_title="Instrument GPT", page_icon="🔬", layout="wide")
+st.set_page_config(page_title="Instrument GPT", page_icon="🔬", layout="wide", initial_sidebar_state="expanded")
 st.markdown(SIDEBAR_AND_MAIN_CSS, unsafe_allow_html=True)
 
 # ── Session state defaults ───────────────────────────────────────────────────
 
 if "current_conv" not in st.session_state:
     st.session_state.current_conv = None
+
+# ── Share link: ?conv=xxx&msg=yyy → read-only shared view ───────────────────
+params = st.query_params
+_share_mode = False
+if "conv" in params and "msg" in params:
+    _share_conv = params["conv"]
+    _share_conv_info = db.get_conversation(_share_conv)
+    try:
+        _share_msg_id = int(params["msg"])
+    except ValueError:
+        _share_msg_id = None
+    if _share_conv_info and _share_msg_id:
+        _share_mode = True
+elif "conv" in params:
+    _share_conv = params["conv"]
+    if db.get_conversation(_share_conv):
+        st.session_state.current_conv = _share_conv
 
 if "settings" not in st.session_state:
     st.session_state.settings = {
@@ -118,6 +151,15 @@ if "settings" not in st.session_state:
     }
 
 client_ip = get_client_ip()
+
+# Share mode: render Q&A only, no sidebar, no chat input
+if _share_mode:
+    _share_messages = db.get_qa_pair(_share_conv, _share_msg_id)
+    if _share_messages:
+        for msg in _share_messages:
+            with st.chat_message(msg["role"]):
+                media_utils.render_message(msg["content"])
+    st.stop()
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 
@@ -267,8 +309,8 @@ if not conv_id:
         unsafe_allow_html=True,
     )
 
-# Render existing messages with per-answer like
-# Use fragment to auto-refresh like status when summarization is in progress
+# Render existing messages with per-answer save
+# Use fragment to auto-refresh save status when summarization is in progress
 cwd = st.session_state.settings.get("cwd", "")
 _has_pending = False
 if conv_id:
@@ -285,24 +327,61 @@ def _messages_with_likes():
             if conv_id and msg["role"] == "assistant" and "id" in msg:
                 mid = msg["id"]
                 entry = liked.get(mid)
-                if not entry:
-                    if st.button("👍", key=f"like_{mid}", help="Add to knowledge base", type="secondary"):
-                        ok, m = knowledge.start_summarization(conv_id, mid, cwd)
-                        st.toast(m)
-                        st.rerun()
-                elif entry["status"] in ("pending", "summarizing"):
-                    if st.button("👍 … ✕", key=f"cancel_{mid}", help="Cancel summarization"):
-                        ok, m = knowledge.cancel_or_unlike(conv_id, mid)
-                        st.toast(m)
-                        st.rerun()
-                else:
-                    if st.button("✓", key=f"unlike_{mid}", help="In base · click to remove", type="secondary"):
-                        ok, m = knowledge.cancel_or_unlike(conv_id, mid)
-                        st.toast(m)
+                btn_col1, btn_col2, _ = st.columns([1, 1, 40], gap="small")
+                with btn_col1:
+                    if not entry:
+                        if st.button("💾", key=f"like_{mid}", help="Save to knowledge base", type="secondary"):
+                            ok, m = knowledge.start_summarization(conv_id, mid, cwd)
+                            st.toast(m)
+                            st.rerun()
+                    elif entry["status"] in ("pending", "summarizing"):
+                        if st.button("💾 … ✕", key=f"cancel_{mid}", help="Cancel saving"):
+                            ok, m = knowledge.cancel_or_unlike(conv_id, mid)
+                            st.toast(m)
+                            st.rerun()
+                    else:
+                        if st.button("✓", key=f"unlike_{mid}", help="Saved · click to remove", type="secondary"):
+                            ok, m = knowledge.cancel_or_unlike(conv_id, mid)
+                            st.toast(m)
+                            st.rerun()
+                with btn_col2:
+                    if st.button("🔗", key=f"share_{mid}", help="Copy share link", type="secondary"):
+                        st.session_state["_copy_share"] = f"http://{SERVER_IP}:8501/?conv={conv_id}&msg={mid}"
                         st.rerun()
 
 
 _messages_with_likes()
+
+_share_url = st.session_state.pop("_copy_share", None)
+if _share_url:
+    st.components.v1.html(
+        f"""<script>
+        (function(){{
+            var url = "{_share_url}";
+            function fallbackCopy(text) {{
+                var ta = document.createElement("textarea");
+                ta.value = text;
+                ta.style.position = "fixed";
+                ta.style.left = "-9999px";
+                document.body.appendChild(ta);
+                ta.focus();
+                ta.select();
+                document.execCommand("copy");
+                document.body.removeChild(ta);
+            }}
+            window.focus();
+            setTimeout(function(){{
+                if (navigator.clipboard && navigator.clipboard.writeText) {{
+                    navigator.clipboard.writeText(url).catch(function(){{ fallbackCopy(url); }});
+                }} else {{
+                    fallbackCopy(url);
+                }}
+            }}, 300);
+        }})();
+        </script>""",
+        height=0,
+    )
+    st.toast("Share link copied!")
 
 # ── Chat input & streaming response ─────────────────────────────────────────
 

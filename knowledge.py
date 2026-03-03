@@ -120,9 +120,9 @@ def start_summarization(conv_id: str, last_message_id: int, cwd: str) -> tuple[b
     existing = db.get_liked_entry(conv_id, last_message_id)
     if existing:
         if existing["status"] in ("pending", "summarizing"):
-            return False, "Already summarizing."
+            return False, "Already saving."
         if existing["status"] == "completed":
-            return False, "Already in base."
+            return False, "Already saved."
 
     cwd = cwd or str(ROOT)
     try:
@@ -133,7 +133,7 @@ def start_summarization(conv_id: str, last_message_id: int, cwd: str) -> tuple[b
             stderr=subprocess.DEVNULL,
         )
         db.create_liked_entry(conv_id, last_message_id, worker_pid=proc.pid)
-        return True, "Adding…"
+        return True, "Saving…"
     except Exception as e:
         return False, str(e)
 
@@ -144,7 +144,7 @@ def cancel_or_unlike(conv_id: str, last_message_id: int) -> tuple[bool, str]:
 
     entry = db.get_liked_entry(conv_id, last_message_id)
     if not entry:
-        return False, "Not in base."
+        return False, "Not saved."
 
     if entry["status"] in ("pending", "summarizing") and entry.get("worker_pid"):
         try:

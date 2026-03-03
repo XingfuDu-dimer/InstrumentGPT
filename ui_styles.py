@@ -4,7 +4,6 @@ SIDEBAR_AND_MAIN_CSS = """
 /* ---- sidebar ---- */
 section[data-testid="stSidebar"] {
     background-color: #171720;
-    min-width: 260px;
 }
 section[data-testid="stSidebar"] .stButton > button {
     width: 100%;
@@ -49,7 +48,9 @@ section[data-testid="stSidebar"] hr {
     padding-top: 1.2rem;
 }
 /* hide chrome */
-#MainMenu, footer, header {visibility: hidden;}
+#MainMenu, footer {visibility: hidden;}
+header [data-testid="stToolbar"] {display: none;}
+header [data-testid="stDecoration"] {display: none;}
 /* tool indicator */
 .tool-ind {
     font-size: 0.78rem;
@@ -83,6 +84,19 @@ section[data-testid="stSidebar"] hr {
     font-size: 0.9rem;
     margin: 0;
     line-height: 1.5;
+}
+/* action buttons in chat — force square aspect ratio */
+[class*="st-key-unlike_"] button,
+[class*="st-key-like_"] button,
+[class*="st-key-cancel_"] button,
+[class*="st-key-share_"] button {
+    min-width: 2.5rem !important;
+    width: 2.5rem !important;
+    height: 2.5rem !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
 }
 </style>
 """
