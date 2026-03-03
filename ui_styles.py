@@ -85,7 +85,7 @@ header [data-testid="stDecoration"] {display: none;}
     margin: 0;
     line-height: 1.5;
 }
-/* action buttons in chat — force square aspect ratio */
+/* action buttons in chat — square, side by side */
 [class*="st-key-unlike_"] button,
 [class*="st-key-like_"] button,
 [class*="st-key-cancel_"] button,
@@ -97,6 +97,14 @@ header [data-testid="stDecoration"] {display: none;}
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
+}
+[class*="st-key-action_btns_"] [data-testid="stHorizontalBlock"] {
+    max-width: 7rem !important;
+    gap: 0.25rem !important;
+}
+[class*="st-key-action_btns_"] [data-testid="stColumn"] {
+    flex: 0 0 auto !important;
+    width: auto !important;
 }
 </style>
 """

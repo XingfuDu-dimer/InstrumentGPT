@@ -68,21 +68,6 @@ _MODEL_LABELS = {
 db.init_db()
 
 
-def _get_server_ip() -> str:
-    """Get this machine's LAN IP for shareable links."""
-    import socket
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return "localhost"
-
-
-SERVER_IP = _get_server_ip()
-
 
 def get_client_ip() -> str:
     try:
@@ -327,37 +312,44 @@ def _messages_with_likes():
             if conv_id and msg["role"] == "assistant" and "id" in msg:
                 mid = msg["id"]
                 entry = liked.get(mid)
-                btn_col1, btn_col2, _ = st.columns([1, 1, 40], gap="small")
-                with btn_col1:
-                    if not entry:
-                        if st.button("💾", key=f"like_{mid}", help="Save to knowledge base", type="secondary"):
-                            ok, m = knowledge.start_summarization(conv_id, mid, cwd)
-                            st.toast(m)
+                with st.container(key=f"action_btns_{mid}"):
+                    btn_col1, btn_col2 = st.columns(2)
+                    with btn_col1:
+                        if not entry:
+                            if st.button("💾", key=f"like_{mid}", help="Save to knowledge base", type="secondary"):
+                                ok, m = knowledge.start_summarization(conv_id, mid, cwd)
+                                st.toast(m)
+                                st.rerun()
+                        elif entry["status"] in ("pending", "summarizing"):
+                            if st.button("💾 … ✕", key=f"cancel_{mid}", help="Cancel saving"):
+                                ok, m = knowledge.cancel_or_unlike(conv_id, mid)
+                                st.toast(m)
+                                st.rerun()
+                        else:
+                            if st.button("✓", key=f"unlike_{mid}", help="Saved · click to remove", type="secondary"):
+                                ok, m = knowledge.cancel_or_unlike(conv_id, mid)
+                                st.toast(m)
+                                st.rerun()
+                    with btn_col2:
+                        if st.button("🔗", key=f"share_{mid}", help="Copy share link", type="secondary"):
+                            st.session_state["_copy_share"] = f"__DYNAMIC__?conv={conv_id}&msg={mid}"
                             st.rerun()
-                    elif entry["status"] in ("pending", "summarizing"):
-                        if st.button("💾 … ✕", key=f"cancel_{mid}", help="Cancel saving"):
-                            ok, m = knowledge.cancel_or_unlike(conv_id, mid)
-                            st.toast(m)
-                            st.rerun()
-                    else:
-                        if st.button("✓", key=f"unlike_{mid}", help="Saved · click to remove", type="secondary"):
-                            ok, m = knowledge.cancel_or_unlike(conv_id, mid)
-                            st.toast(m)
-                            st.rerun()
-                with btn_col2:
-                    if st.button("🔗", key=f"share_{mid}", help="Copy share link", type="secondary"):
-                        st.session_state["_copy_share"] = f"http://{SERVER_IP}:8501/?conv={conv_id}&msg={mid}"
-                        st.rerun()
 
 
 _messages_with_likes()
 
-_share_url = st.session_state.pop("_copy_share", None)
-if _share_url:
+_share_path = st.session_state.pop("_copy_share", None)
+if _share_path:
+    _qs = _share_path.split("?", 1)[1] if "?" in _share_path else ""
     st.components.v1.html(
         f"""<script>
         (function(){{
-            var url = "{_share_url}";
+            var qs = "?{_qs}";
+            var origin = "";
+            try {{ origin = (window.top || window.parent || window).location.origin; }} catch(e) {{
+                origin = window.location.origin;
+            }}
+            var url = origin + "/" + qs;
             function fallbackCopy(text) {{
                 var ta = document.createElement("textarea");
                 ta.value = text;
