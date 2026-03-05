@@ -1,9 +1,8 @@
 """Image, Plotly chart, and message rendering utilities."""
 import glob
+import json
 import os
 import re
-import subprocess
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +14,14 @@ ROOT = Path(__file__).resolve().parent
 _IMAGE_MARKER = "<!-- ATTACHED_IMAGES:"
 _IMAGE_EXT_RE = re.compile(r'[\w.\-]+\.(?:png|jpg|jpeg|svg)', re.IGNORECASE)
 _PLOTLY_MARKER = "<!-- PLOTLY_CHART:"
+
+# Explicit marker: <!-- PLOTLY: path/to/file.json -->
+_PLOTLY_MARKER_RE = re.compile(r'<!--\s*PLOTLY\s*:\s*([^\s>]+)\s*-->', re.IGNORECASE)
+# Generic paths: path/to/file.json or path/to/file.html (at least one path segment)
+_PLOTLY_PATH_RE = re.compile(
+    r'(?:^|[\s"\'(\[])((?:\./|[a-zA-Z0-9_\-]+/)[a-zA-Z0-9_./\-]*\.(?:json|html))',
+    re.IGNORECASE,
+)
 
 
 def find_new_images(cwd: str, since: float, response_text: str) -> list[str]:
@@ -58,43 +65,74 @@ def split_images(content: str) -> tuple[str, list[str]]:
     return text, paths_str.split("|") if paths_str else []
 
 
-def try_interactive_plot(cwd: str, response_text: str):
-    """Call dataAnalysisPlotly.py --plotly-json; return (cache_path, fig) or (None, None)."""
-    log_match = re.search(r'(InstrumentDebug[\w\-\.]+\.log)', response_text)
-    if not log_match:
-        return None, None
-    log_name = log_match.group(1)
-
-    log_path = os.path.join(cwd, "log", log_name)
-    if not os.path.isfile(log_path):
-        matches = glob.glob(os.path.join(cwd, "**", log_name), recursive=True)
-        log_path = matches[0] if matches else None
-    if not log_path or not os.path.isfile(log_path):
-        return None, None
-
-    script = os.path.join(cwd, "scripts", "dataAnalysisPlotly.py")
-    if not os.path.isfile(script):
-        return None, None
-
+def _load_plotly_from_json(path: str):
+    """Load Plotly figure from JSON file. Returns fig or None."""
     try:
-        result = subprocess.run(
-            [sys.executable, script, log_path, "--plotly-json"],
-            capture_output=True, text=True, cwd=cwd, timeout=60,
-        )
-        if result.returncode != 0 or not result.stdout.strip():
-            return None, None
-
         import plotly.io as pio
-        fig = pio.from_json(result.stdout)
-
-        cache_dir = ROOT / "data" / "plotly_cache"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = cache_dir / f"{int(time.time() * 1000)}.json"
-        cache_file.write_text(result.stdout, encoding="utf-8")
-
-        return str(cache_file), fig
+        return pio.read_json(path)
     except Exception:
+        return None
+
+
+def _load_plotly_from_html(path: str):
+    """Load Plotly figure from HTML file (extract embedded JSON). Returns fig or None."""
+    try:
+        import plotly.io as pio
+        html = Path(path).read_text(encoding="utf-8", errors="ignore")
+        # Plotly HTML embeds data in Plotly.newPlot(div, data, layout, config)
+        matches = re.findall(r"Plotly\.newPlot\((.*)\)", html[-65536:])
+        if not matches:
+            return None
+        call_args = json.loads(f"[{matches[0]}]")
+        plotly_json = json.dumps({"data": call_args[1], "layout": call_args[2]})
+        return pio.from_json(plotly_json)
+    except Exception:
+        return None
+
+
+def try_interactive_plot(cwd: str, response_text: str):
+    """
+    Parse response for Plotly file paths (generic, repo-agnostic).
+    Supports: <!-- PLOTLY: path --> or any path/to/file.json|.html in the text.
+    Returns (cache_path, fig) or (None, None).
+    """
+    if not cwd or not os.path.isdir(cwd):
         return None, None
+
+    candidates = []
+
+    # Explicit marker: <!-- PLOTLY: path -->
+    for m in _PLOTLY_MARKER_RE.finditer(response_text):
+        candidates.append(m.group(1).strip())
+
+    # Generic paths in text (e.g. "saved to device/10.1.1.46/log/foo.html")
+    for m in _PLOTLY_PATH_RE.finditer(response_text):
+        candidates.append(m.group(1).strip())
+
+    for rel_path in candidates:
+        if not rel_path or ".." in rel_path:
+            continue
+        full_path = os.path.join(cwd, rel_path.lstrip("./"))
+        if not os.path.isfile(full_path):
+            continue
+
+        fig = None
+        if full_path.lower().endswith(".json"):
+            fig = _load_plotly_from_json(full_path)
+        elif full_path.lower().endswith(".html"):
+            fig = _load_plotly_from_html(full_path)
+
+        if fig is not None:
+            cache_dir = ROOT / "data" / "plotly_cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_file = cache_dir / f"{int(time.time() * 1000)}.json"
+            try:
+                import plotly.io as pio
+                cache_file.write_text(pio.to_json(fig), encoding="utf-8")
+                return str(cache_file), fig
+            except Exception:
+                return str(cache_file), fig  # still return fig
+    return None, None
 
 
 def attach_plotly(content: str, cache_path: str) -> str:
