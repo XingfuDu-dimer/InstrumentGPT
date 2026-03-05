@@ -14,12 +14,14 @@ ROOT = Path(__file__).resolve().parent
 _IMAGE_MARKER = "<!-- ATTACHED_IMAGES:"
 _IMAGE_EXT_RE = re.compile(r'[\w.\-]+\.(?:png|jpg|jpeg|svg)', re.IGNORECASE)
 _PLOTLY_MARKER = "<!-- PLOTLY_CHART:"
+_PLOTLY_HTML_MARKER = "<!-- PLOTLY_HTML:"
 
 # Explicit marker: <!-- PLOTLY: path/to/file.json -->
 _PLOTLY_MARKER_RE = re.compile(r'<!--\s*PLOTLY\s*:\s*([^\s>]+)\s*-->', re.IGNORECASE)
-# Generic paths: path/to/file.json or path/to/file.html (at least one path segment)
+# Generic paths: path/to/file.json or path\to\file.html (forward or backslash)
+# Allow preceding: space, newline, " ' ( [ ` > : (markdown/code context)
 _PLOTLY_PATH_RE = re.compile(
-    r'(?:^|[\s"\'(\[])((?:\./|[a-zA-Z0-9_\-]+/)[a-zA-Z0-9_./\-]*\.(?:json|html))',
+    r'(?:^|[\s"\'(\[`>:])((?:\./|[a-zA-Z0-9_\-]+[/\\])[a-zA-Z0-9_./\\\-]*\.(?:json|html))',
     re.IGNORECASE,
 )
 
@@ -79,8 +81,7 @@ def _load_plotly_from_html(path: str):
     try:
         import plotly.io as pio
         html = Path(path).read_text(encoding="utf-8", errors="ignore")
-        # Plotly HTML embeds data in Plotly.newPlot(div, data, layout, config)
-        matches = re.findall(r"Plotly\.newPlot\((.*)\)", html[-65536:])
+        matches = re.findall(r"Plotly\.(?:newPlot|react)\s*\((.*)\)", html[-65536:])
         if not matches:
             return None
         call_args = json.loads(f"[{matches[0]}]")
@@ -93,50 +94,61 @@ def _load_plotly_from_html(path: str):
 def try_interactive_plot(cwd: str, response_text: str):
     """
     Parse response for Plotly file paths (generic, repo-agnostic).
-    Supports: <!-- PLOTLY: path --> or any path/to/file.json|.html in the text.
-    Returns (cache_path, fig) or (None, None).
+    Returns (cache_path, fig, html_path).
+    - If fig: use st.plotly_chart(fig)
+    - Elif html_path: embed HTML with st.components.v1.html() (fallback when parse fails)
     """
     if not cwd or not os.path.isdir(cwd):
-        return None, None
+        return None, None, None
 
     candidates = []
-
-    # Explicit marker: <!-- PLOTLY: path -->
     for m in _PLOTLY_MARKER_RE.finditer(response_text):
         candidates.append(m.group(1).strip())
-
-    # Generic paths in text (e.g. "saved to device/10.1.1.46/log/foo.html")
     for m in _PLOTLY_PATH_RE.finditer(response_text):
-        candidates.append(m.group(1).strip())
+        candidates.append(m.group(1).strip().strip("`"))
 
     for rel_path in candidates:
         if not rel_path or ".." in rel_path:
             continue
-        full_path = os.path.join(cwd, rel_path.lstrip("./"))
+        rel_path_norm = rel_path.replace("\\", "/").lstrip("./")
+        full_path = os.path.normpath(os.path.join(cwd, rel_path_norm))
         if not os.path.isfile(full_path):
             continue
 
-        fig = None
         if full_path.lower().endswith(".json"):
             fig = _load_plotly_from_json(full_path)
+            if fig is not None:
+                cache_dir = ROOT / "data" / "plotly_cache"
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_file = cache_dir / f"{int(time.time() * 1000)}.json"
+                try:
+                    import plotly.io as pio
+                    cache_file.write_text(pio.to_json(fig), encoding="utf-8")
+                except Exception:
+                    pass
+                return str(cache_file), fig, None
         elif full_path.lower().endswith(".html"):
             fig = _load_plotly_from_html(full_path)
-
-        if fig is not None:
-            cache_dir = ROOT / "data" / "plotly_cache"
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            cache_file = cache_dir / f"{int(time.time() * 1000)}.json"
-            try:
-                import plotly.io as pio
-                cache_file.write_text(pio.to_json(fig), encoding="utf-8")
-                return str(cache_file), fig
-            except Exception:
-                return str(cache_file), fig  # still return fig
-    return None, None
+            if fig is not None:
+                cache_dir = ROOT / "data" / "plotly_cache"
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_file = cache_dir / f"{int(time.time() * 1000)}.json"
+                try:
+                    import plotly.io as pio
+                    cache_file.write_text(pio.to_json(fig), encoding="utf-8")
+                except Exception:
+                    pass
+                return str(cache_file), fig, None
+            return full_path, None, full_path
+    return None, None, None
 
 
 def attach_plotly(content: str, cache_path: str) -> str:
     return f"{content}\n{_PLOTLY_MARKER}{cache_path} -->"
+
+
+def attach_plotly_html(content: str, html_path: str) -> str:
+    return f"{content}\n{_PLOTLY_HTML_MARKER}{html_path} -->"
 
 
 def split_plotly(content: str) -> tuple[str, str | None]:
@@ -149,6 +161,16 @@ def split_plotly(content: str) -> tuple[str, str | None]:
     return text, cache_path
 
 
+def split_plotly_html(content: str) -> tuple[str, str | None]:
+    if _PLOTLY_HTML_MARKER not in content:
+        return content, None
+    idx = content.index(_PLOTLY_HTML_MARKER)
+    text = content[:idx].rstrip()
+    marker = content[idx:]
+    html_path = marker[len(_PLOTLY_HTML_MARKER):-len(" -->")].strip()
+    return text, html_path
+
+
 def render_message(content: str) -> None:
     """Render a chat message (markdown, images, Plotly charts) to Streamlit."""
     if _PLOTLY_MARKER in content:
@@ -159,6 +181,17 @@ def render_message(content: str) -> None:
                 import plotly.io as pio
                 fig = pio.from_json(Path(cache_path).read_text(encoding="utf-8"))
                 st.plotly_chart(fig, use_container_width=True, key=f"plotly_{cache_path}")
+            except Exception:
+                pass
+        return
+
+    if _PLOTLY_HTML_MARKER in content:
+        text, html_path = split_plotly_html(content)
+        st.markdown(text)
+        if html_path and os.path.isfile(html_path):
+            try:
+                html_content = Path(html_path).read_text(encoding="utf-8", errors="ignore")
+                st.components.v1.html(html_content, height=1200, scrolling=False)
             except Exception:
                 pass
         return

@@ -11,6 +11,7 @@ Default working directory for Cursor CLI:
 """
 import html
 import os
+import sys
 import time
 from datetime import timedelta
 from pathlib import Path
@@ -417,7 +418,7 @@ if prompt := st.chat_input("Ask anything…"):
         st.markdown(prompt)
 
     # Build enriched prompt
-    enriched = prompt_utils.enrich_prompt(prompt, settings.get("mdc_tag", ""))
+    enriched = prompt_utils.enrich_prompt(prompt, settings.get("mdc_tag", ""), settings.get("cwd", ""))
     cli_session = conv_info.get("cli_session_id") if conv_info else None
 
     # Load memory and build structured context
@@ -504,12 +505,15 @@ if prompt := st.chat_input("Ask anything…"):
                 response_area.markdown(full_response or "_No response received._")
 
         # Plotly/images
-        plotly_cache, plotly_fig = media_utils.try_interactive_plot(
-            settings.get("cwd", ""), full_response,
-        )
+        _cwd = settings.get("cwd", "")
+        plotly_cache, plotly_fig, plotly_html_path = media_utils.try_interactive_plot(_cwd, full_response)
         if plotly_fig:
             st.plotly_chart(plotly_fig, use_container_width=True, key=f"plotly_live_{conv_id}")
             full_response = media_utils.attach_plotly(full_response, plotly_cache)
+        elif plotly_html_path:
+            html_content = Path(plotly_html_path).read_text(encoding="utf-8", errors="ignore")
+            st.components.v1.html(html_content, height=1200, scrolling=False)
+            full_response = media_utils.attach_plotly_html(full_response, plotly_html_path)
         else:
             new_images = media_utils.find_new_images(
                 settings.get("cwd", ""), request_start_time, full_response,

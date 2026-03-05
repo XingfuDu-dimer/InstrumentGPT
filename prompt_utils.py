@@ -26,7 +26,7 @@ def auto_title(question: str) -> str:
     return (title[:47] + "...") if len(title) > 50 else (title or "New Chat")
 
 
-def enrich_prompt(question: str, mdc_tag: str) -> str:
+def enrich_prompt(question: str, mdc_tag: str, cwd: str = "") -> str:
     tag = mdc_tag.strip()
     if not tag or tag in question:
         return question
@@ -34,9 +34,12 @@ def enrich_prompt(question: str, mdc_tag: str) -> str:
     if not result:
         return question
     ip, dev = result
+    cwd_note = f"Your working directory is `{cwd}`. " if cwd else ""
     return (
         f"Use {tag} as the primary guide. "
         f"The user's target device is zspr {dev} ({ip}). "
+        f"{cwd_note}"
+        f"All relative paths (e.g. `./device/{ip}/log/`) are relative to your working directory. "
         f"Proceed directly with their request — do not ask for the device again.\n\n"
         f"{question}"
     )
