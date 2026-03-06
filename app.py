@@ -33,38 +33,28 @@ DEFAULT_CWD = os.environ.get("INSTRUMENT_CWD")
 if not DEFAULT_CWD or not Path(DEFAULT_CWD).exists():
     DEFAULT_CWD = r"C:\Users\XingfuDu\Desktop\Instrument"
 
-DEFAULT_MODEL = ""
+DEFAULT_MODEL = "composer-1.5"
 DEFAULT_MODE = "agent"
 DEFAULT_MDC_TAG = "@log-download-and-debug.mdc"
 
+# Model options: (display_label, cli_model_id)
+# Empty string = Auto (no -m flag). CLI IDs from `agent models`.
 _MODEL_OPTIONS = [
-    "",
-    "Composer 1.5",
-    "Claude 4.6 Sonnet",
-    "Claude 4.6 Opus",
-    "GPT-5.2",
-    "GPT-5.3 Codex",
-    "Gemini 3.1 Pro",
-    "Gemini 3 Flash",
-    "Grok Code",
-    "Claude 4.5 Sonnet",
-    "Claude 4.5 Opus",
-    "Composer 1",
+    ("", ""),
+    ("Composer 1.5", "composer-1.5"),
+    ("Claude 4.6 Sonnet", "sonnet-4.6"),
+    ("Claude 4.6 Opus", "opus-4.6"),
+    ("GPT-5.2", "gpt-5.2"),
+    ("GPT-5.3 Codex", "gpt-5.3-codex"),
+    ("Gemini 3.1 Pro", "gemini-3.1-pro"),
+    ("Gemini 3 Flash", "gemini-3-flash"),
+    ("Grok", "grok"),
+    ("Claude 4.5 Sonnet", "sonnet-4.5"),
+    ("Claude 4.5 Opus", "opus-4.5"),
+    ("Composer 1", "composer-1"),
 ]
-_MODEL_LABELS = {
-    "": "Auto (default)",
-    "Composer 1.5": "Composer 1.5",
-    "Claude 4.6 Sonnet": "Claude 4.6 Sonnet",
-    "Claude 4.6 Opus": "Claude 4.6 Opus",
-    "GPT-5.2": "GPT-5.2",
-    "GPT-5.3 Codex": "GPT-5.3 Codex",
-    "Gemini 3.1 Pro": "Gemini 3.1 Pro",
-    "Gemini 3 Flash": "Gemini 3 Flash",
-    "Grok Code": "Grok Code  —  xAI, $0.2 in",
-    "Claude 4.5 Sonnet": "Claude 4.5 Sonnet",
-    "Claude 4.5 Opus": "Claude 4.5 Opus",
-    "Composer 1": "Composer 1",
-}
+_MODEL_LABELS = {cli_id: (label or "Auto (default)") for label, cli_id in _MODEL_OPTIONS}
+_MODEL_LABEL_TO_ID = {label: cli_id for label, cli_id in _MODEL_OPTIONS}
 
 db.init_db()
 
@@ -241,16 +231,22 @@ You can refer to a device by IP (e.g. `10.1.1.47`).
 
     with st.expander("⚙  Settings"):
         current_model = st.session_state.settings["model"]
-        if current_model not in _MODEL_OPTIONS:
-            _MODEL_OPTIONS.append(current_model)
+        # Migrate old label-based values (e.g. "Claude 4.6 Sonnet") to CLI IDs
+        if current_model and current_model in _MODEL_LABEL_TO_ID:
+            current_model = _MODEL_LABEL_TO_ID[current_model]
+        _model_ids = [cli_id for _, cli_id in _MODEL_OPTIONS]
+        if current_model and current_model not in _model_ids:
+            _model_ids.append(current_model)
             _MODEL_LABELS[current_model] = current_model
-        st.session_state.settings["model"] = st.selectbox(
+        idx = _model_ids.index(current_model) if current_model in _model_ids else 0
+        selected_id = st.selectbox(
             "Model",
-            options=_MODEL_OPTIONS,
-            index=_MODEL_OPTIONS.index(current_model),
+            options=_model_ids,
+            index=idx,
             format_func=lambda m: _MODEL_LABELS.get(m, m),
-            help="Select the model for the Cursor Agent CLI",
+            help="Select the model for the Cursor Agent CLI (IDs from `agent models`)",
         )
+        st.session_state.settings["model"] = selected_id
         st.session_state.settings["mode"] = st.selectbox(
             "Mode",
             ["agent", "ask", "plan"],
