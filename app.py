@@ -356,49 +356,24 @@ if _share_path:
             }}
             var url = origin + "/" + qs;
 
-            var old = pdoc.getElementById("share-copy-bar");
-            if (old) old.remove();
+            var ok = false;
+            var ta = pdoc.createElement("textarea");
+            ta.value = url;
+            ta.style.position = "fixed";
+            ta.style.left = "-9999px";
+            pdoc.body.appendChild(ta);
+            ta.select();
+            try {{ ok = pdoc.execCommand("copy"); }} catch(e) {{}}
+            pdoc.body.removeChild(ta);
+            if (!ok && window.parent.navigator.clipboard && window.parent.navigator.clipboard.writeText) {{
+                window.parent.navigator.clipboard.writeText(url).then(function(){{ ok = true; }}).catch(function(){{}});
+            }}
 
-            var bar = pdoc.createElement("div");
-            bar.id = "share-copy-bar";
-            bar.style.cssText = "position:fixed;bottom:0;left:0;right:0;padding:10px 20px;background:#262730;display:flex;align-items:center;gap:10px;z-index:999999;font-family:sans-serif;box-shadow:0 -2px 12px rgba(0,0,0,0.3);animation:slideUp .2s ease;";
-
-            var style = pdoc.createElement("style");
-            style.textContent = "@keyframes slideUp{{from{{transform:translateY(100%)}}to{{transform:translateY(0)}}}}";
-            bar.appendChild(style);
-
-            var inp = pdoc.createElement("input");
-            inp.type = "text";
-            inp.readOnly = true;
-            inp.value = url;
-            inp.style.cssText = "flex:1;padding:6px 10px;border:1px solid #555;border-radius:4px;font-size:13px;font-family:monospace;color:#fafafa;background:#0e1117;outline:none;";
-            bar.appendChild(inp);
-
-            var copyBtn = pdoc.createElement("button");
-            copyBtn.textContent = "Copy";
-            copyBtn.style.cssText = "padding:6px 18px;background:#ff4b4b;color:#fff;border:none;border-radius:4px;font-size:13px;cursor:pointer;font-weight:500;white-space:nowrap;";
-            copyBtn.onclick = function() {{
-                inp.focus();
-                inp.select();
-                inp.setSelectionRange(0, 99999);
-                var ok = pdoc.execCommand("copy");
-                if (!ok && window.parent.navigator.clipboard) {{
-                    window.parent.navigator.clipboard.writeText(url).catch(function(){{}});
-                }}
-                copyBtn.textContent = "Copied!";
-                copyBtn.style.background = "#28a745";
-                setTimeout(function(){{ bar.remove(); }}, 800);
-            }};
-            bar.appendChild(copyBtn);
-
-            var closeBtn = pdoc.createElement("button");
-            closeBtn.textContent = "✕";
-            closeBtn.style.cssText = "padding:4px 8px;background:none;color:#aaa;border:none;font-size:16px;cursor:pointer;";
-            closeBtn.onclick = function(){{ bar.remove(); }};
-            bar.appendChild(closeBtn);
-
-            pdoc.body.appendChild(bar);
-            setTimeout(function(){{ inp.focus(); inp.select(); }}, 100);
+            var toast = pdoc.createElement("div");
+            toast.textContent = ok ? "Link copied!" : "請手動選取後 Ctrl+C";
+            toast.style.cssText = "position:fixed;top:16px;right:20px;padding:8px 16px;background:#262730;color:#fafafa;border-radius:6px;font-size:13px;z-index:999999;font-family:sans-serif;box-shadow:0 2px 12px rgba(0,0,0,0.3);";
+            pdoc.body.appendChild(toast);
+            setTimeout(function(){{ toast.remove(); }}, 1500);
         }})();
         </script>""",
         height=0,
