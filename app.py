@@ -145,9 +145,9 @@ if "settings" not in st.session_state:
     else:
         st.session_state.settings = dict(defaults)
 
-# Share mode: render Q&A only, no sidebar, no chat input
+# Share mode: render full conversation up to shared message, no sidebar, no chat input
 if _share_mode:
-    _share_messages = db.get_qa_pair(_share_conv, _share_msg_id)
+    _share_messages = db.get_messages_up_to(_share_conv, _share_msg_id)
     if _share_messages:
         for msg in _share_messages:
             with st.chat_message(msg["role"]):
@@ -370,7 +370,7 @@ if _share_path:
             }}
 
             var toast = pdoc.createElement("div");
-            toast.textContent = ok ? "Link copied!" : "請手動選取後 Ctrl+C";
+            toast.textContent = ok ? "Link copied!" : "Copy failed – select manually and press Ctrl+C";
             toast.style.cssText = "position:fixed;top:16px;right:20px;padding:8px 16px;background:#262730;color:#fafafa;border-radius:6px;font-size:13px;z-index:999999;font-family:sans-serif;box-shadow:0 2px 12px rgba(0,0,0,0.3);";
             pdoc.body.appendChild(toast);
             setTimeout(function(){{ toast.remove(); }}, 1500);

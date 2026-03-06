@@ -28,23 +28,30 @@ def code_with_copy(text: str, language: str = "text") -> None:
 <code class="{lang_class}">{html.escape(text)}</code>
 </pre>
 <button onclick="(function(){{
-    var code = {escaped};
-    var ok = false;
-    var ta = document.createElement('textarea');
-    ta.value = code;
-    ta.style.position='fixed';ta.style.left='-9999px';
-    document.body.appendChild(ta);
-    ta.select();
-    try {{ ok = document.execCommand('copy'); }} catch(e) {{}}
-    document.body.removeChild(ta);
-    if (!ok && navigator.clipboard && navigator.clipboard.writeText) {{
-        navigator.clipboard.writeText(code).then(function(){{ ok=true; }}).catch(function(){{}});
-    }}
-    var btn = event.target;
-    var orig = btn.textContent;
-    btn.textContent = ok ? '已複製' : '請手動選取後 Ctrl+C';
-    btn.style.background = ok ? '#28a745' : '#856404';
-    setTimeout(function(){{ btn.textContent = orig; btn.style.background = ''; }}, 1500);
+    try {{
+        var code = {escaped};
+        var btn = event.target;
+        var orig = btn.textContent;
+        var pdoc = document;
+        try {{ pdoc = window.parent.document; }} catch(e) {{}}
+        var ok = false;
+        var ta = pdoc.createElement('textarea');
+        ta.value = code;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        pdoc.body.appendChild(ta);
+        ta.select();
+        try {{ ok = pdoc.execCommand('copy'); }} catch(e) {{}}
+        pdoc.body.removeChild(ta);
+        btn.textContent = ok ? '✓' : orig;
+        btn.style.background = ok ? '#28a745' : '';
+        setTimeout(function(){{ btn.textContent = orig; btn.style.background = ''; }}, 1500);
+        var toast = pdoc.createElement('div');
+        toast.textContent = ok ? 'Copied!' : 'Copy failed – select manually and press Ctrl+C';
+        toast.style.cssText = 'position:fixed;top:16px;right:20px;padding:8px 16px;background:#262730;color:#fafafa;border-radius:6px;font-size:13px;z-index:999999;font-family:sans-serif;box-shadow:0 2px 12px rgba(0,0,0,0.3);';
+        pdoc.body.appendChild(toast);
+        setTimeout(function(){{ toast.remove(); }}, 1500);
+    }} catch(err) {{}}
 }})()"
 style="position:absolute;top:8px;right:8px;padding:4px 10px;font-size:12px;border:none;border-radius:4px;background:#262730;color:#fafafa;cursor:pointer;">
 複製
