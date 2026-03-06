@@ -105,7 +105,7 @@ def create_process(
         "-f",
     ]
     if model:
-        args.extend(["-m", model])
+        args.extend(["--model", model])
     if mode and mode != "agent":
         args.extend(["--mode", mode])
     if resume_session:

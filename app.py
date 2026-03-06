@@ -38,7 +38,7 @@ DEFAULT_MODE = "agent"
 DEFAULT_MDC_TAG = "@log-download-and-debug.mdc"
 
 # Model options: (display_label, cli_model_id)
-# Empty string = Auto (no -m flag). CLI IDs from `agent models`.
+# Empty string = Auto (no --model flag). CLI IDs from `agent models`.
 _MODEL_OPTIONS = [
     ("", ""),
     ("Composer 1.5", "composer-1.5"),
