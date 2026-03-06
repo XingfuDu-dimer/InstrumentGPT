@@ -118,15 +118,23 @@ elif "conv" in params:
     if db.get_conversation(_share_conv):
         st.session_state.current_conv = _share_conv
 
+client_ip = get_client_ip()
+
+# Load settings from DB (persists across page refresh); fallback to defaults
 if "settings" not in st.session_state:
-    st.session_state.settings = {
+    defaults = {
         "model": DEFAULT_MODEL,
         "mode": DEFAULT_MODE,
         "mdc_tag": DEFAULT_MDC_TAG,
         "cwd": DEFAULT_CWD,
     }
-
-client_ip = get_client_ip()
+    saved = db.get_user_settings(client_ip)
+    if saved:
+        st.session_state.settings = {
+            k: (saved.get(k) or defaults[k]) for k in defaults
+        }
+    else:
+        st.session_state.settings = dict(defaults)
 
 # Share mode: render Q&A only, no sidebar, no chat input
 if _share_mode:
@@ -264,6 +272,8 @@ You can refer to a device by IP (e.g. `10.1.1.47`).
             value=st.session_state.settings["cwd"],
             help="Cursor CLI cwd (repo to operate on). Default at start: INSTRUMENT_CWD or app dir.",
         )
+        # Persist settings to DB so they survive page refresh
+        db.save_user_settings(client_ip, st.session_state.settings)
 
 # ── Main area — load conversation ────────────────────────────────────────────
 

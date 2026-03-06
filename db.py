@@ -104,6 +104,52 @@ def init_db():
         except sqlite3.OperationalError:
             pass  # migration already done
 
+        # Per-IP user settings (model, mode, mdc_tag, cwd) — persists across page refresh
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS user_settings (
+                ip_address TEXT PRIMARY KEY,
+                model TEXT,
+                mode TEXT,
+                mdc_tag TEXT,
+                cwd TEXT,
+                updated_at REAL NOT NULL
+            );
+        """)
+
+
+def get_user_settings(ip_address: str) -> dict | None:
+    """Return saved settings for this IP, or None if none saved."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT model, mode, mdc_tag, cwd FROM user_settings WHERE ip_address = ?",
+            (ip_address,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def save_user_settings(ip_address: str, settings: dict) -> None:
+    """Persist settings for this IP."""
+    now = time.time()
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO user_settings (ip_address, model, mode, mdc_tag, cwd, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(ip_address) DO UPDATE SET
+                   model = excluded.model,
+                   mode = excluded.mode,
+                   mdc_tag = excluded.mdc_tag,
+                   cwd = excluded.cwd,
+                   updated_at = excluded.updated_at""",
+            (
+                ip_address,
+                settings.get("model", ""),
+                settings.get("mode", "agent"),
+                settings.get("mdc_tag", ""),
+                settings.get("cwd", ""),
+                now,
+            ),
+        )
+
 
 def create_conversation(ip_address: str, title: str = "New Chat") -> str:
     conv_id = uuid.uuid4().hex[:12]
