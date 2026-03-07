@@ -24,7 +24,7 @@ def code_with_copy(text: str, language: str = "text") -> None:
     lang_class = f"language-{language}" if language else ""
     html_fragment = f"""
 <div class="st-code-copy-wrapper" style="position:relative;margin:0.5rem 0;">
-<pre style="margin:0;padding:1rem;background:#0e1117;border-radius:8px;overflow:auto;font-size:0.85rem;line-height:1.4;">
+<pre style="margin:0;padding:1rem;background:#ffffff;border-radius:8px;overflow:auto;font-size:0.85rem;line-height:1.4;color:#333;">
 <code class="{lang_class}">{html.escape(text)}</code>
 </pre>
 <button onclick="(function(){{
