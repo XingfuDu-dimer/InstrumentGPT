@@ -54,13 +54,12 @@ def code_with_copy(text: str, language: str = "text") -> None:
     }} catch(err) {{}}
 }})()"
 style="position:absolute;top:8px;right:8px;padding:4px 10px;font-size:12px;border:none;border-radius:4px;background:#262730;color:#fafafa;cursor:pointer;">
-複製
+📋
 </button>
 </div>
 """
-    # Estimate height: ~20px per line, cap at 600px
-    line_count = min(text.count("\n") + 1, 30)
-    height = min(max(line_count * 20, 80), 600)
+    line_count = text.count("\n") + 1
+    height = min(max(line_count * 20, 80), 2000)
     st.components.v1.html(html_fragment, height=height)
 
 _IMAGE_MARKER = "<!-- ATTACHED_IMAGES:"

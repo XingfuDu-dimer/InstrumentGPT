@@ -116,6 +116,20 @@ def init_db():
             );
         """)
 
+        # Shared usage examples — visible to all users
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS usage_examples (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                source_conv_id TEXT,
+                created_by_ip TEXT,
+                created_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_usage_created
+                ON usage_examples(created_at DESC);
+        """)
+
 
 def get_user_settings(ip_address: str) -> dict | None:
     """Return saved settings for this IP, or None if none saved."""
@@ -410,3 +424,32 @@ def delete_liked_entry(conversation_id: str, last_message_id: int) -> None:
             "DELETE FROM liked_entries WHERE conversation_id = ? AND last_message_id = ?",
             (conversation_id, last_message_id),
         )
+
+
+# ── Usage examples (shared across all users) ─────────────────────────────────
+
+
+def add_usage_example(title: str, content: str, source_conv_id: str | None = None, created_by_ip: str = "") -> str:
+    example_id = uuid.uuid4().hex[:12]
+    now = time.time()
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO usage_examples (id, title, content, source_conv_id, created_by_ip, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (example_id, title, content, source_conv_id, created_by_ip, now),
+        )
+    return example_id
+
+
+def get_usage_examples() -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, title, content, source_conv_id, created_by_ip, created_at "
+            "FROM usage_examples ORDER BY created_at DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_usage_example(example_id: str) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM usage_examples WHERE id = ?", (example_id,))

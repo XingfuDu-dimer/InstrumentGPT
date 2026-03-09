@@ -86,6 +86,8 @@ st.markdown(SIDEBAR_AND_MAIN_CSS, unsafe_allow_html=True)
 
 if "current_conv" not in st.session_state:
     st.session_state.current_conv = None
+if "viewing_example" not in st.session_state:
+    st.session_state.viewing_example = None
 
 # ── Share link: ?conv=xxx&msg=yyy → read-only shared view ───────────────────
 params = st.query_params
@@ -138,6 +140,7 @@ with st.sidebar:
 
     if st.button("＋  New Chat", key="btn_new_chat", use_container_width=True):
         st.session_state.current_conv = None
+        st.session_state.viewing_example = None
         st.rerun()
 
     st.divider()
@@ -156,6 +159,7 @@ with st.sidebar:
                 help=media_utils.relative_time(conv["updated_at"]),
             ):
                 st.session_state.current_conv = conv["id"]
+                st.session_state.viewing_example = None
                 st.rerun()
         with col_del:
             if st.button("×", key=f"d_{conv['id']}"):
@@ -165,6 +169,30 @@ with st.sidebar:
                 st.rerun()
 
     if conversations:
+        st.divider()
+
+    _usage_examples = db.get_usage_examples()
+    if _usage_examples:
+        st.markdown('<p style="font-size:0.8em;color:#888;margin:0 0 4px 2px;">📝 Usage Examples</p>', unsafe_allow_html=True)
+        for _ue in _usage_examples:
+            _ue_active = st.session_state.viewing_example == _ue["id"]
+            col_ue_title, col_ue_del = st.columns([5, 1])
+            with col_ue_title:
+                _ue_label = ("▸ " if _ue_active else "") + _ue["title"]
+                if st.button(
+                    _ue_label,
+                    key=f"ue_{_ue['id']}",
+                    use_container_width=True,
+                ):
+                    st.session_state.viewing_example = _ue["id"]
+                    st.session_state.current_conv = None
+                    st.rerun()
+            with col_ue_del:
+                if st.button("×", key=f"del_ue_{_ue['id']}"):
+                    db.delete_usage_example(_ue["id"])
+                    if _ue_active:
+                        st.session_state.viewing_example = None
+                    st.rerun()
         st.divider()
 
     with st.expander("📖  How to Use"):
@@ -177,37 +205,37 @@ with st.sidebar:
 
 | Device | IP |
 |--------|-----|
-| zspr 050 | 10.1.1.45 |
+| zspr 050 | 10.1.1.85 |
 | zspr 051 | 10.1.1.46 |
-| zspr 052 | 10.1.1.47 |
-| zspr 053 | 10.1.1.48 |
-| zspr 054 | 10.1.1.49 |
-| zspr 055 | 10.1.1.50 |
+| zspr 052 | 10.1.1.80 |
+| zspr 053 | 10.1.1.91 |
+| zspr 054 | 10.1.1.93 |
+| zspr 055 | 10.1.1.108 |
 
-You can refer to a device by IP (e.g. `10.1.1.47`).
+You can refer to a device by **name** (e.g. `zspr 052`, `52`, `052`) or by **IP** (e.g. `10.1.1.80`). The system resolves device names to IPs automatically.
 
 ---
 
 #### Quick Start — Example Prompts
 
 **Analyze an error** (specify device + describe the problem):
-> `10.1.1.47 Door open timeout error, what happened?`
+> `zspr 052 Door open timeout error, what happened?`
 
-> `10.1.1.45 LED not blinking, can you check the logs?`
+> `52 LED not blinking, can you check the logs?`
 
 **Check a specific log session**:
-> `10.1.1.47 check InstrumentDebug_2026-02-13_00-44-28.1.log for temp drop`
+> `52 check InstrumentDebug_2026-02-13_00-44-28.1.log for temp drop`
 
 **Paste log content for analysis** (include device):
-> `10.1.1.47 [2026-02-13 05:04:52.782][debug] temp 61.9, next line temp 29.4 — why the sudden drop?`
+> `zspr 052 [2026-02-13 05:04:52.782][debug] temp 61.9, next line temp 29.4 — why the sudden drop?`
 
 **Plot PID / temperature control data**:
-> `10.1.1.47 plot temp control`
+> `52 plot temp control`
 
-> `10.1.1.45 plot PID`
+> `50 plot PID`
 
 **Download all logs from a device**:
-> `10.1.1.47 download all logs`
+> `52 download all logs`
 
 **General questions (no device needed)**:
 > `What causes a Door timeout error?`
@@ -224,12 +252,18 @@ You can refer to a device by IP (e.g. `10.1.1.47`).
 ---
 
 #### Tips
-- **Include the device IP** in your question to trigger automatic log download and analysis.
-- **Without an IP**, the assistant answers from general knowledge and the codebase only (no download).
+- **Include the device** (name or IP) in your question to trigger automatic log download and analysis.
+- **Without a device**, the assistant answers from general knowledge and the codebase only (no download).
 - After downloading, the assistant analyzes the logs, cross-references your source code, and reports root cause, timeline, and fix suggestions.
 - **Interactive charts**: When you ask to plot data, the chart supports zoom, pan, and hover — use your mouse to explore.
 - **Memory**: The assistant remembers what was downloaded and analyzed earlier in the conversation. No need to re-specify the device or re-download logs unless you want fresh data.
 - **Settings** (below): Change model, mode, MDC tag, and working directory. Settings are saved per user.
+
+---
+
+#### 💡 Add Your Own Example
+
+In any conversation, type **"add this to usage example"** and the entire conversation will be saved here for everyone to see.
 """)
 
     with st.expander("⚙  Settings"):
@@ -259,6 +293,27 @@ You can refer to a device by IP (e.g. `10.1.1.47`).
         db.save_user_settings(client_ip, st.session_state.settings)
 
 # ── Main area — load conversation ────────────────────────────────────────────
+
+# ── Usage example view (read-only) ───────────────────────────────────────────
+if st.session_state.viewing_example:
+    _all_examples = {e["id"]: e for e in db.get_usage_examples()}
+    _sel_example = _all_examples.get(st.session_state.viewing_example)
+    if _sel_example:
+        st.markdown(f"### 📝 {_sel_example['title']}")
+        st.divider()
+        try:
+            _example_msgs = json.loads(_sel_example["content"])
+        except (json.JSONDecodeError, TypeError):
+            _example_msgs = None
+        if _example_msgs and isinstance(_example_msgs, list):
+            for _emsg in _example_msgs:
+                with st.chat_message(_emsg.get("role", "user")):
+                    media_utils.render_message(_emsg.get("content", ""))
+        else:
+            st.markdown(_sel_example["content"], unsafe_allow_html=False)
+        st.stop()
+    else:
+        st.session_state.viewing_example = None
 
 conv_id = st.session_state.current_conv
 conv_info: dict | None = None
@@ -375,6 +430,22 @@ if prompt := st.chat_input("Ask anything…"):
         conv_id = db.create_conversation(client_ip, prompt_utils.auto_title(prompt))
         st.session_state.current_conv = conv_id
         conv_info = db.get_conversation(conv_id)
+
+    # ── "Add to usage example" interception ──────────────────────────────
+    if prompt_utils.is_add_usage_example(prompt) and conv_id and messages:
+        conv_title = (conv_info or {}).get("title", "Usage Example")
+        example_content = prompt_utils.format_conversation_as_example(messages)
+        db.add_usage_example(
+            title=conv_title,
+            content=example_content,
+            source_conv_id=conv_id,
+            created_by_ip=client_ip,
+        )
+        db.add_message(conv_id, "user", prompt)
+        confirm_msg = f"✅ This conversation has been added to **How to Use** as an example: **{conv_title}**"
+        db.add_message(conv_id, "assistant", confirm_msg)
+        st.toast("Added to usage examples!")
+        st.rerun()
 
     # Persist & show the user message
     db.add_message(conv_id, "user", prompt)
