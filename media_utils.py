@@ -105,53 +105,6 @@ def find_new_images(cwd: str, since: float, response_text: str) -> list[str]:
     return found
 
 
-_CONFIG_PATH_RE = re.compile(
-    r"(?:^|[\s\"'(])(?:\./)?(device[/\\][^\s\"'<>)]+[/\\](?:config[/\\](?:InstrumentParameters|SystemHealthParameters)\.json"
-    r"|SystemHealth[/\\][^\s\"'<>)]+\.json))",
-    re.IGNORECASE,
-)
-
-
-def find_new_config_files(cwd: str, since: float) -> list[str]:
-    """Find device config/SystemHealth JSON files modified during this request."""
-    found: list[str] = []
-    if not cwd or not os.path.isdir(cwd):
-        return found
-    device_dir = os.path.join(cwd, "device")
-    if not os.path.isdir(device_dir):
-        return found
-    config_names = ("InstrumentParameters.json", "SystemHealthParameters.json")
-    for ip_dir in glob.glob(os.path.join(device_dir, "*")):
-        if not os.path.isdir(ip_dir):
-            continue
-        config_dir = os.path.join(ip_dir, "config")
-        if os.path.isdir(config_dir):
-            for name in config_names:
-                p = os.path.join(config_dir, name)
-                if os.path.isfile(p) and os.path.getmtime(p) > since:
-                    found.append(os.path.abspath(p))
-        health_dir = os.path.join(ip_dir, "SystemHealth")
-        if os.path.isdir(health_dir):
-            for p in glob.glob(os.path.join(health_dir, "*.json")):
-                if os.path.isfile(p) and os.path.getmtime(p) > since:
-                    found.append(os.path.abspath(p))
-    found.sort(key=lambda p: os.path.getmtime(p))
-    return found
-
-
-def find_config_paths_in_response(cwd: str, response_text: str) -> list[str]:
-    """Extract device config paths from response (e.g. 'Full JSON is in device/10.1.1.85/config/...')."""
-    found: list[str] = []
-    if not cwd or not os.path.isdir(cwd):
-        return found
-    seen: set[str] = set()
-    for m in _CONFIG_PATH_RE.finditer(response_text):
-        rel = m.group(1).replace("\\", "/").lstrip("./")
-        full = os.path.abspath(os.path.join(cwd, rel))
-        if full not in seen and os.path.isfile(full):
-            seen.add(full)
-            found.append(full)
-    return found
 
 
 def attach_images(content: str, image_paths: list[str]) -> str:

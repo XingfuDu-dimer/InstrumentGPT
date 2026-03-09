@@ -10,29 +10,18 @@ Default working directory for Cursor CLI:
   - Otherwise defaults to this app's directory (ROOT).
 """
 import html
-import json
 import os
-import sys
 import time
 from datetime import timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 
-# Add Instrument/scripts to path for show_device_data, show_file (live in Instrument repo)
-# Must run before importing those modules
-for _p in (ROOT.parent / "Instrument" / "scripts", Path(os.environ.get("INSTRUMENT_CWD", "")) / "scripts"):
-    if _p.is_dir() and str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
-        break
-
 import streamlit as st
 
 import cursor_cli
 import db
 import knowledge
-import show_device_data
-import show_file
 import memory
 import prompt_utils
 import media_utils
@@ -48,25 +37,6 @@ DEFAULT_MODE = "agent"
 DEFAULT_MDC_TAG = "@log-download-and-debug.mdc"
 
 db.init_db()
-
-
-def _config_path_for_type(cwd: str, ip: str, data_type: str) -> str | None:
-    """Return absolute path for config file, or None for SystemHealth (dynamic)."""
-    base = Path(cwd) / "device" / ip
-    if data_type == "InstrumentParameters":
-        return str((base / "config" / "InstrumentParameters.json").resolve())
-    if data_type == "SystemHealthParameters":
-        return str((base / "config" / "SystemHealthParameters.json").resolve())
-    if data_type == "SystemHistory":
-        return str((base / "SystemHealth" / "SystemHistory.json").resolve())
-    if data_type == "SystemHealth":
-        files = sorted((base / "SystemHealth").glob("SystemHealth_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-        return str(files[0].resolve()) if files else None
-    return None
-
-
-def _config_label_for_type(data_type: str) -> str:
-    return {"InstrumentParameters": "InstrumentParameters", "SystemHealthParameters": "SystemHealthParameters", "SystemHealth": "SystemHealth", "SystemHistory": "SystemHistory"}.get(data_type, data_type)
 
 
 def get_client_ip() -> str:
@@ -395,7 +365,7 @@ if prompt := st.chat_input("Ask anything…"):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Build enriched prompt
+    # Build enriched prompt (always include context so Agent has mdc_tag, cwd, device)
     enriched = prompt_utils.enrich_prompt(prompt, settings.get("mdc_tag", ""), settings.get("cwd", ""))
     cli_session = conv_info.get("cli_session_id") if conv_info else None
 
@@ -408,105 +378,6 @@ if prompt := st.chat_input("Ask anything…"):
     if ip_result:
         diag_state.device_ip = ip_result[0]
         diag_state.device_name = f"zspr {ip_result[1]}"
-    else:
-        # Resolve device number (50, 52, etc.) via device_mapping for diag_state
-        resolved = show_device_data.resolve_ip(prompt, _cwd, None, messages)
-        if resolved:
-            diag_state.device_ip = resolved
-
-    # Short-circuit: "show me config" → run show_device_data.sh directly, display full JSON
-    if show_device_data.is_show_config_intent(prompt):
-        ip = show_device_data.resolve_ip(prompt, _cwd, diag_state.device_ip, messages)
-        if ip:
-            diag_state.device_ip = ip
-            data_type = show_device_data.parse_config_type(prompt)
-            ok, output, err = show_device_data.run_show_device_data(_cwd, ip, data_type)
-            if ok:
-                try:
-                    data = json.loads(output)
-                    config_path = _config_path_for_type(_cwd, ip, data_type)
-                    label = _config_label_for_type(data_type)
-                    msg = f"**{label}** for device ({ip}):\n\n"
-                    msg = media_utils.attach_config_files(msg, [config_path] if config_path else [])
-                    db.add_message(conv_id, "assistant", msg)
-                    db.update_memory(conv_id, existing_summary, diag_state.serialize())
-                    with st.chat_message("assistant"):
-                        st.markdown(media_utils._strip_markers(msg))
-                        with st.expander(f"📄 {label} (full)", expanded=True):
-                            st.json(data)
-                    st.rerun()
-                except json.JSONDecodeError:
-                    msg = f"**{data_type}** for {ip}:\n\n```json\n{output[:50000]}\n```"
-                    if len(output) > 50000:
-                        msg += "\n\n*(truncated)*"
-                    db.add_message(conv_id, "assistant", msg)
-                    db.update_memory(conv_id, existing_summary, diag_state.serialize())
-                    with st.chat_message("assistant"):
-                        st.markdown(msg)
-                    st.rerun()
-            else:
-                db.add_message(conv_id, "assistant", f"**Error:** {err}\n\nRun `download_config.sh {ip}` first if config not yet downloaded.")
-                with st.chat_message("assistant"):
-                    st.markdown(f"**Error:** {err}")
-                    st.info(f"Run `download_config.sh {ip}` first if config not yet downloaded.")
-                st.rerun()
-        # else: no IP resolved, fall through to agent
-
-    # Short-circuit: "show me <path>" → display arbitrary file (skip oversized logs)
-    if show_file.is_show_file_intent(prompt):
-        paths = show_file.extract_file_paths(prompt, _cwd, messages)
-        displayable: list[tuple[str, str, bool]] = []  # (path, content, is_json)
-        skipped: list[str] = []
-        for p in paths:
-            ok, reason = show_file.can_display_file(p)
-            if not ok:
-                skipped.append(f"{os.path.basename(p)}: {reason}")
-                continue
-            content, is_json = show_file.read_file_for_display(p)
-            if content:
-                displayable.append((p, content, is_json))
-        if displayable:
-            parts = []
-            for path, content, is_json in displayable:
-                name = os.path.basename(path)
-                if is_json:
-                    try:
-                        data = json.loads(content)
-                        parts.append((path, f"**{name}**\n\n", data, True))
-                    except json.JSONDecodeError:
-                        parts.append((path, f"**{name}**\n\n", content, False))
-                else:
-                    parts.append((path, f"**{name}**\n\n", content, False))
-            msg_parts = []
-            file_paths = []
-            for path, prefix, data_or_text, is_json in parts:
-                msg_parts.append(prefix)
-                file_paths.append(path)
-            msg = "".join(msg_parts)
-            msg = media_utils.attach_files(msg, file_paths)
-            if skipped:
-                msg += "\n\n*Skipped (too large):* " + "; ".join(skipped)
-            db.add_message(conv_id, "assistant", msg)
-            db.update_memory(conv_id, existing_summary, diag_state.serialize())
-            with st.chat_message("assistant"):
-                st.markdown(media_utils._strip_markers(msg))
-                for path, prefix, data_or_text, is_json in parts:
-                    name = os.path.basename(path)
-                    with st.expander(f"📄 {name}", expanded=True):
-                        if is_json:
-                            st.json(data_or_text)
-                        else:
-                            lang = "log" if name.endswith(".log") else "text"
-                            media_utils.code_with_copy(data_or_text, language=lang)
-                if skipped:
-                    st.caption("Skipped (too large): " + "; ".join(skipped))
-            st.rerun()
-        elif skipped and not displayable:
-            err_msg = "Skipped (too large): " + "; ".join(skipped)
-            db.add_message(conv_id, "assistant", err_msg)
-            with st.chat_message("assistant"):
-                st.warning(err_msg)
-            st.rerun()
 
     if messages:
         enriched, updated_summary = memory.build_prompt(
@@ -600,19 +471,6 @@ if prompt := st.chat_input("Ask anything…"):
                 st.image(img_path, caption=os.path.basename(img_path))
             if new_images:
                 full_response = media_utils.attach_images(full_response, new_images)
-        new_configs = media_utils.find_new_config_files(_cwd, request_start_time)
-        refd_configs = media_utils.find_config_paths_in_response(_cwd, full_response)
-        all_configs = list(dict.fromkeys(new_configs + refd_configs))
-        if all_configs:
-            for path in all_configs:
-                if os.path.isfile(path):
-                    try:
-                        data = json.loads(Path(path).read_text(encoding="utf-8", errors="ignore"))
-                        with st.expander(f"📄 {os.path.basename(path)}", expanded=True):
-                            st.json(data)
-                    except (json.JSONDecodeError, OSError):
-                        pass
-            full_response = media_utils.attach_config_files(full_response, all_configs)
 
     # Clear streaming state
     st.session_state.pop("_streaming_proc", None)

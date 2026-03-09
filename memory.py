@@ -229,11 +229,6 @@ def build_prompt(
             "re-downloading logs already analyzed. Reuse existing findings. "
             "If the user asks for fresh logs, re-download.</note>"
         )
-    elif any(m["role"] == "assistant" for m in all_messages):
-        blocks.append(
-            "<note>Current question is NOT about device debugging. "
-            "Do not download logs or analyze devices. Answer directly.</note>"
-        )
 
     # Summary of older turns
     if updated_summary:
