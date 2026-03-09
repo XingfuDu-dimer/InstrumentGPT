@@ -1,6 +1,5 @@
 """Image, Plotly chart, and message rendering utilities."""
 import glob
-import html
 import json
 import os
 import re
@@ -13,57 +12,8 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parent
 
 
-def code_with_copy(text: str, language: str = "text") -> None:
-    """Render code block with a copy button that works in HTTP/HTTPS (fallback to execCommand)."""
-    # Truncate very long content to avoid huge HTML
-    max_len = 50000
-    if len(text) > max_len:
-        text = text[:max_len] + "\n\n... (truncated)"
-    # Escape for JSON to safely embed in script
-    escaped = json.dumps(text)
-    lang_class = f"language-{language}" if language else ""
-    html_fragment = f"""
-<div class="st-code-copy-wrapper" style="position:relative;margin:0.5rem 0;">
-<pre style="margin:0;padding:1rem;background:#ffffff;border-radius:8px;overflow:auto;font-size:0.85rem;line-height:1.4;color:#333;">
-<code class="{lang_class}">{html.escape(text)}</code>
-</pre>
-<button onclick="(function(){{
-    try {{
-        var code = {escaped};
-        var btn = event.target;
-        var orig = btn.textContent;
-        var pdoc = document;
-        try {{ pdoc = window.parent.document; }} catch(e) {{}}
-        var ok = false;
-        var ta = pdoc.createElement('textarea');
-        ta.value = code;
-        ta.style.position = 'fixed';
-        ta.style.left = '-9999px';
-        pdoc.body.appendChild(ta);
-        ta.select();
-        try {{ ok = pdoc.execCommand('copy'); }} catch(e) {{}}
-        pdoc.body.removeChild(ta);
-        btn.textContent = ok ? '✓' : orig;
-        btn.style.background = ok ? '#28a745' : '';
-        setTimeout(function(){{ btn.textContent = orig; btn.style.background = ''; }}, 1500);
-        var toast = pdoc.createElement('div');
-        toast.textContent = ok ? 'Copied!' : 'Copy failed – select manually and press Ctrl+C';
-        toast.style.cssText = 'position:fixed;top:16px;right:20px;padding:8px 16px;background:#262730;color:#fafafa;border-radius:6px;font-size:13px;z-index:999999;font-family:sans-serif;box-shadow:0 2px 12px rgba(0,0,0,0.3);';
-        pdoc.body.appendChild(toast);
-        setTimeout(function(){{ toast.remove(); }}, 1500);
-    }} catch(err) {{}}
-}})()"
-style="position:absolute;top:8px;right:8px;padding:4px 10px;font-size:12px;border:none;border-radius:4px;background:#262730;color:#fafafa;cursor:pointer;">
-📋
-</button>
-</div>
-"""
-    line_count = text.count("\n") + 1
-    height = min(max(line_count * 20, 80), 2000)
-    st.components.v1.html(html_fragment, height=height)
 
 _IMAGE_MARKER = "<!-- ATTACHED_IMAGES:"
-_CONFIG_MARKER = "<!-- ATTACHED_CONFIG:"
 _FILE_MARKER = "<!-- ATTACHED_FILES:"
 _IMAGE_EXT_RE = re.compile(r'[\w.\-]+\.(?:png|jpg|jpeg|svg)', re.IGNORECASE)
 _PLOTLY_MARKER = "<!-- PLOTLY_CHART:"
@@ -112,12 +62,6 @@ def attach_images(content: str, image_paths: list[str]) -> str:
     return f"{content}\n{_IMAGE_MARKER}{'|'.join(image_paths)} -->"
 
 
-def attach_config_files(content: str, config_paths: list[str]) -> str:
-    if not config_paths:
-        return content
-    return f"{content}\n{_CONFIG_MARKER}{'|'.join(config_paths)} -->"
-
-
 def attach_files(content: str, file_paths: list[str]) -> str:
     if not file_paths:
         return content
@@ -132,16 +76,6 @@ def split_files(content: str) -> tuple[str, list[str]]:
     marker = content[idx:]
     end = marker.find(" -->")
     paths_str = marker[len(_FILE_MARKER):end].strip() if end >= 0 else ""
-    return text, paths_str.split("|") if paths_str else []
-
-
-def split_config_files(content: str) -> tuple[str, list[str]]:
-    if _CONFIG_MARKER not in content:
-        return content, []
-    idx = content.index(_CONFIG_MARKER)
-    text = content[:idx].rstrip()
-    marker = content[idx:]
-    paths_str = marker[len(_CONFIG_MARKER):-len(" -->")].strip()
     return text, paths_str.split("|") if paths_str else []
 
 
@@ -269,7 +203,7 @@ def split_plotly_html(content: str) -> tuple[str, str | None]:
 def _strip_markers(text: str) -> str:
     """Remove marker blocks from text for clean display."""
     result = text
-    for start in (_IMAGE_MARKER, _CONFIG_MARKER, _FILE_MARKER, _PLOTLY_MARKER, _PLOTLY_HTML_MARKER):
+    for start in (_IMAGE_MARKER, _FILE_MARKER, _PLOTLY_MARKER, _PLOTLY_HTML_MARKER, "<!-- ATTACHED_CONFIG:"):
         while start in result:
             idx = result.index(start)
             end = result.find(" -->", idx)
@@ -308,17 +242,45 @@ def render_message(content: str) -> None:
             if os.path.isfile(img_path):
                 st.image(img_path, caption=os.path.basename(img_path))
 
-    if _CONFIG_MARKER in content:
-        _, config_paths = split_config_files(content)
-        _render_config_files(config_paths)
-
     if _FILE_MARKER in content:
         _, file_paths = split_files(content)
         _render_files(file_paths)
 
+    # Backward compat: old messages may have ATTACHED_CONFIG marker
+    _OLD_CONFIG_MARKER = "<!-- ATTACHED_CONFIG:"
+    if _OLD_CONFIG_MARKER in content:
+        idx = content.index(_OLD_CONFIG_MARKER)
+        end = content.find(" -->", idx)
+        if end >= 0:
+            paths_str = content[idx + len(_OLD_CONFIG_MARKER):end].strip()
+            if paths_str:
+                _render_files(paths_str.split("|"))
+
+
+_EXT_LANG = {
+    ".h": "cpp", ".hpp": "cpp", ".cpp": "cpp", ".cc": "cpp", ".c": "c",
+    ".py": "python", ".js": "javascript", ".ts": "typescript",
+    ".sh": "bash", ".bash": "bash",
+    ".json": "json", ".xml": "xml", ".yaml": "yaml", ".yml": "yaml",
+    ".md": "markdown", ".html": "html", ".css": "css",
+    ".log": "log", ".txt": "text", ".csv": "text",
+    ".cmake": "cmake", ".makefile": "makefile",
+}
+
+
+def lang_for_file(name: str) -> str:
+    """Return syntax highlight language for a filename."""
+    lower = name.lower()
+    for ext, lang in _EXT_LANG.items():
+        if lower.endswith(ext):
+            return lang
+    if lower == "makefile" or lower == "cmakelists.txt":
+        return "cmake"
+    return "text"
+
 
 def _render_files(paths: list[str]) -> None:
-    """Render arbitrary files (JSON or text). Skips if too large or unreadable."""
+    """Render arbitrary files (JSON or text) in expandable sections."""
     for path in paths:
         if not os.path.isfile(path):
             continue
@@ -330,26 +292,10 @@ def _render_files(paths: list[str]) -> None:
                     try:
                         st.json(json.loads(raw))
                     except json.JSONDecodeError:
-                        code_with_copy(raw[:50000], language="text")
+                        st.code(raw[:50000], language="json")
                 else:
-                    lang = "log" if name.endswith(".log") else "text"
-                    code_with_copy(raw[:50000], language=lang)
+                    st.code(raw[:50000], language=lang_for_file(name))
         except (OSError, UnicodeDecodeError):
-            pass
-
-
-def _render_config_files(paths: list[str]) -> None:
-    """Render config JSON files in expandable sections."""
-    for path in paths:
-        if not os.path.isfile(path):
-            continue
-        try:
-            raw = Path(path).read_text(encoding="utf-8", errors="ignore")
-            data = json.loads(raw)
-            name = os.path.basename(path)
-            with st.expander(f"📄 {name}", expanded=True):
-                st.json(data)
-        except (json.JSONDecodeError, OSError):
             pass
 
 

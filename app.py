@@ -479,7 +479,7 @@ if prompt := st.chat_input("Ask anything…"):
 
     # Debug: show the actual prompt sent to CLI
     with st.expander("Debug: actual prompt sent", expanded=False):
-        media_utils.code_with_copy(enriched, language="markdown")
+        st.code(enriched, language="markdown")
 
     request_start_time = time.time()
 
@@ -550,10 +550,18 @@ if prompt := st.chat_input("Ask anything…"):
 
         _cwd = settings.get("cwd", "")
 
-        # show_file events: AI called show_file.py → render raw content directly
-        if show_file_paths:
+        # show_file events: render raw content directly (deduplicate paths)
+        _seen_show: set[str] = set()
+        deduped_show_paths: list[str] = []
+        for p in show_file_paths:
+            norm = os.path.normpath(os.path.join(_cwd, p)) if not os.path.isabs(p) else os.path.normpath(p)
+            if norm not in _seen_show:
+                _seen_show.add(norm)
+                deduped_show_paths.append(p)
+
+        if deduped_show_paths:
             rendered_paths: list[str] = []
-            for rel_path in show_file_paths:
+            for rel_path in deduped_show_paths:
                 abs_path = os.path.normpath(os.path.join(_cwd, rel_path)) if not os.path.isabs(rel_path) else rel_path
                 if not os.path.isfile(abs_path):
                     continue
@@ -565,8 +573,7 @@ if prompt := st.chat_input("Ask anything…"):
                         if abs_path.lower().endswith(".json"):
                             st.json(json.loads(raw))
                         else:
-                            lang = "log" if name.endswith(".log") else "text"
-                            media_utils.code_with_copy(raw[:50000], language=lang)
+                            st.code(raw[:50000], language=media_utils.lang_for_file(name))
                 except (json.JSONDecodeError, OSError):
                     pass
             if rendered_paths:

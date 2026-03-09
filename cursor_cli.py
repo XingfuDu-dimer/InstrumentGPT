@@ -219,6 +219,9 @@ def iter_events(
                 tc = data.get("tool_call", {})
                 for path in _extract_show_file_paths(tc):
                     yield ("show_file", path)
+                read_show = _extract_read_device_path(tc)
+                if read_show:
+                    yield ("show_file", read_show)
                 plotly_path = _extract_plotly_json_path(tc)
                 if plotly_path:
                     yield ("plotly_json", plotly_path)
@@ -275,6 +278,24 @@ def _extract_show_file_paths(tc: dict) -> list[str]:
         return []
     raw = m.group(1).strip()
     return [p.strip().strip("'\"") for p in raw.split() if p.strip()]
+
+
+# ---------------------------------------------------------------------------
+# Detect readToolCall for device config/health files → emit show_file event
+# ---------------------------------------------------------------------------
+_DEVICE_DATA_RE = re.compile(
+    r'device/[^/]+/(config|SystemHealth)/.*\.json$', re.IGNORECASE,
+)
+
+
+def _extract_read_device_path(tc: dict) -> str | None:
+    """If a readToolCall reads a device config/SystemHealth JSON, return path."""
+    if "readToolCall" not in tc:
+        return None
+    path = tc["readToolCall"].get("args", {}).get("path", "")
+    if _DEVICE_DATA_RE.search(path):
+        return path
+    return None
 
 
 # ---------------------------------------------------------------------------
