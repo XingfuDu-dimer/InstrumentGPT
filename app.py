@@ -47,12 +47,26 @@ db.init_db()
 
 
 def get_client_ip() -> str:
+    """Get the real client IP via the Tornado websocket request object.
+
+    st.context.ip_address is not available in Streamlit <=1.44, so we
+    reach into the runtime to read request.remote_ip from the websocket
+    handler instead.
+    """
     try:
-        ctx = getattr(st, "context", None)
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        from streamlit.runtime import get_instance
+        from streamlit.web.server.browser_websocket_handler import BrowserWebSocketHandler
+
+        ctx = get_script_run_ctx()
         if ctx is not None:
-            ip = getattr(ctx, "ip_address", None)
-            if ip:
-                return ip
+            client = get_instance().get_client(ctx.session_id)
+            if isinstance(client, BrowserWebSocketHandler):
+                ip = client.request.remote_ip
+                if ip and ip not in ("::1",):
+                    return ip
+                if ip == "::1":
+                    return "127.0.0.1"
     except Exception:
         pass
     return "127.0.0.1"
