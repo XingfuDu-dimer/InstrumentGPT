@@ -18,6 +18,7 @@ Debug logging:
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -215,7 +216,13 @@ def iter_events(
                         yield ("text", text)
 
             elif evt == "tool_call" and data.get("subtype") == "started":
-                desc = _describe_tool_call(data.get("tool_call", {}))
+                tc = data.get("tool_call", {})
+                for path in _extract_show_file_paths(tc):
+                    yield ("show_file", path)
+                plotly_path = _extract_plotly_json_path(tc)
+                if plotly_path:
+                    yield ("plotly_json", plotly_path)
+                desc = _describe_tool_call(tc)
                 if desc:
                     yield ("tool", desc)
 
@@ -250,6 +257,65 @@ def stream_response(
         yield ("done", "1")
         return
     yield from iter_events(process)
+
+
+# ---------------------------------------------------------------------------
+# Detect show_file.py calls → push show_file events to frontend
+# ---------------------------------------------------------------------------
+_SHOW_FILE_RE = re.compile(r'show_file\.py\s+(.+)')
+
+
+def _extract_show_file_paths(tc: dict) -> list[str]:
+    """Extract file paths from a shellToolCall that invokes show_file.py."""
+    if "shellToolCall" not in tc:
+        return []
+    cmd = tc["shellToolCall"].get("args", {}).get("command", "")
+    m = _SHOW_FILE_RE.search(cmd)
+    if not m:
+        return []
+    raw = m.group(1).strip()
+    return [p.strip().strip("'\"") for p in raw.split() if p.strip()]
+
+
+# ---------------------------------------------------------------------------
+# Detect dataAnalysisPlotly.py calls → predict output JSON path
+# ---------------------------------------------------------------------------
+_PLOTLY_SCRIPT_RE = re.compile(r'dataAnalysisPlotly\.py\s+(.+)')
+
+
+def _extract_plotly_json_path(tc: dict) -> str | None:
+    """Predict the JSON output path from a dataAnalysisPlotly.py shell command."""
+    if "shellToolCall" not in tc:
+        return None
+    cmd = tc["shellToolCall"].get("args", {}).get("command", "")
+    m = _PLOTLY_SCRIPT_RE.search(cmd)
+    if not m:
+        return None
+    args_str = m.group(1).strip()
+    parts = args_str.split()
+    log_file = None
+    class_name = "PIDController"
+    function_name = "PowerConsumptionByPercentage"
+    i = 0
+    while i < len(parts):
+        if parts[i] == "--class_name" and i + 1 < len(parts):
+            class_name = parts[i + 1]
+            i += 2
+        elif parts[i] == "--function_name" and i + 1 < len(parts):
+            function_name = parts[i + 1]
+            i += 2
+        elif parts[i].startswith("--"):
+            i += 1
+        elif log_file is None:
+            log_file = parts[i].strip("'\"")
+            i += 1
+        else:
+            i += 1
+    if not log_file:
+        return None
+    import os
+    log_dir = os.path.dirname(log_file) if os.path.dirname(log_file) else "."
+    return os.path.join(log_dir, f"{class_name}_{function_name}.json")
 
 
 # ---------------------------------------------------------------------------

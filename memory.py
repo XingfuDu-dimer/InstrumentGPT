@@ -93,7 +93,9 @@ class DiagnosticState:
     device_ip: Optional[str] = None
     device_name: Optional[str] = None
     last_log_file: Optional[str] = None
+    last_health_file: Optional[str] = None
     downloaded_logs: list[str] = field(default_factory=list)
+    downloaded_health: list[str] = field(default_factory=list)
     findings: list[str] = field(default_factory=list)
     hypotheses: list[str] = field(default_factory=list)
     root_causes: list[str] = field(default_factory=list)
@@ -122,7 +124,15 @@ class DiagnosticState:
         if self.last_log_file:
             lines.append(f"Last log: {self.last_log_file}")
         if self.downloaded_logs:
-            lines.append(f"Downloaded: {', '.join(self.downloaded_logs[-3:])}")
+            lines.append(f"Downloaded logs: {', '.join(self.downloaded_logs[-3:])}")
+        if self.last_health_file:
+            lines.append(f"Last SystemHealth: {self.last_health_file}")
+        if self.downloaded_health:
+            lines.append(f"Downloaded health: {', '.join(self.downloaded_health[-3:])}")
+        if self.last_health_file or self.downloaded_logs:
+            lines.append(
+                'To display file data to user, use the show-file skill.'
+            )
         if self.findings:
             lines.append("Key findings:")
             for f in self.findings[-5:]:
@@ -141,6 +151,7 @@ class DiagnosticState:
 # ── State extraction (heuristic) ─────────────────────────────────────────────
 
 _LOG_FILE_RE = re.compile(r"(Instrument\w+_\d{4}-\d{2}-\d{2}_[\d\-]+(?:\.\d+)?\.log)")
+_HEALTH_FILE_RE = re.compile(r"((?:device/[^\s]+/)?SystemHealth_\d{4}-\d{2}-\d{2}_[\d\-]+(?:_UTC)?\.json)")
 
 _ROOT_CAUSE_RE = re.compile(
     r"(?:Root [Cc]ause|Confirmed|Resolved)\s*[:：]\s*(.+?)(?:\n|$)"
@@ -166,6 +177,12 @@ def extract_state_updates(
         if log_name not in state.downloaded_logs:
             state.downloaded_logs.append(log_name)
             state.last_log_file = log_name
+
+    for m in _HEALTH_FILE_RE.finditer(response):
+        health_name = m.group(1)
+        if health_name not in state.downloaded_health:
+            state.downloaded_health.append(health_name)
+            state.last_health_file = health_name
 
     for m in _ROOT_CAUSE_RE.finditer(response):
         rc = m.group(1).strip().rstrip(".")

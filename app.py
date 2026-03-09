@@ -10,6 +10,7 @@ Default working directory for Cursor CLI:
   - Otherwise defaults to this app's directory (ROOT).
 """
 import html
+import json
 import os
 import time
 from datetime import timedelta
@@ -27,10 +28,16 @@ import prompt_utils
 import media_utils
 from ui_styles import SIDEBAR_AND_MAIN_CSS
 
-# Default cwd: env INSTRUMENT_CWD at start, else ROOT
+# Default cwd: env INSTRUMENT_CWD at start, else auto-detect
 DEFAULT_CWD = os.environ.get("INSTRUMENT_CWD")
 if not DEFAULT_CWD or not Path(DEFAULT_CWD).exists():
-    DEFAULT_CWD = r"C:\Users\XingfuDu\Desktop\Instrument"
+    _candidate = Path(__file__).resolve().parent.parent / "Instrument"
+    if _candidate.is_dir():
+        DEFAULT_CWD = str(_candidate)
+    elif os.name == "nt":
+        DEFAULT_CWD = r"C:\Users\XingfuDu\Desktop\Instrument"
+    else:
+        DEFAULT_CWD = str(Path.home() / "GPT" / "Instrument")
 
 DEFAULT_MODEL = "composer-1.5"
 DEFAULT_MODE = "agent"
@@ -209,11 +216,20 @@ You can refer to a device by IP (e.g. `10.1.1.47`).
 
 ---
 
+#### Save & Share
+
+- **💾 Save** — click the save button on any assistant answer to generate a summarized knowledge document (saved to `liked_answers/`). Useful for future reference.
+- **🔗 Share** — click the link button to copy a shareable URL. Anyone with the link can view the conversation up to that answer (read-only).
+
+---
+
 #### Tips
 - **Include the device IP** in your question to trigger automatic log download and analysis.
 - **Without an IP**, the assistant answers from general knowledge and the codebase only (no download).
 - After downloading, the assistant analyzes the logs, cross-references your source code, and reports root cause, timeline, and fix suggestions.
 - **Interactive charts**: When you ask to plot data, the chart supports zoom, pan, and hover — use your mouse to explore.
+- **Memory**: The assistant remembers what was downloaded and analyzed earlier in the conversation. No need to re-specify the device or re-download logs unless you want fresh data.
+- **Settings** (below): Change model, mode, MDC tag, and working directory. Settings are saved per user.
 """)
 
     with st.expander("⚙  Settings"):
@@ -422,6 +438,8 @@ if prompt := st.chat_input("Ask anything…"):
         tool_area = st.empty()
         stop_area = st.empty()
         full_response = ""
+        show_file_paths: list[str] = []
+        plotly_json_paths: list[str] = []
 
         stop_area.button("⏹ Stop", key="stop_gen", type="secondary")
 
@@ -435,6 +453,12 @@ if prompt := st.chat_input("Ask anything…"):
                 full_response = payload
                 st.session_state._partial_response = full_response
                 response_area.markdown(full_response + "▌")
+
+            elif evt_type == "show_file":
+                show_file_paths.append(payload)
+
+            elif evt_type == "plotly_json":
+                plotly_json_paths.append(payload)
 
             elif evt_type == "tool":
                 tool_area.markdown(
@@ -453,11 +477,45 @@ if prompt := st.chat_input("Ask anything…"):
                 stop_area.empty()
                 response_area.markdown(full_response or "_No response received._")
 
-        # Plotly/images/config
         _cwd = settings.get("cwd", "")
-        plotly_cache, plotly_fig, plotly_html_path = media_utils.try_interactive_plot(_cwd, full_response)
+
+        # show_file events: AI called show_file.py → render raw content directly
+        if show_file_paths:
+            rendered_paths: list[str] = []
+            for rel_path in show_file_paths:
+                abs_path = os.path.normpath(os.path.join(_cwd, rel_path)) if not os.path.isabs(rel_path) else rel_path
+                if not os.path.isfile(abs_path):
+                    continue
+                rendered_paths.append(abs_path)
+                try:
+                    raw = Path(abs_path).read_text(encoding="utf-8", errors="ignore")
+                    name = os.path.basename(abs_path)
+                    with st.expander(f"📄 {name}", expanded=True):
+                        if abs_path.lower().endswith(".json"):
+                            st.json(json.loads(raw))
+                        else:
+                            lang = "log" if name.endswith(".log") else "text"
+                            media_utils.code_with_copy(raw[:50000], language=lang)
+                except (json.JSONDecodeError, OSError):
+                    pass
+            if rendered_paths:
+                full_response = media_utils.attach_files(full_response, rendered_paths)
+
+        # Plotly: try intercepted paths first, then scan response text + timestamp
+        plotly_cache, plotly_fig, plotly_html_path = None, None, None
+        if plotly_json_paths:
+            for pjp in plotly_json_paths:
+                abs_pjp = os.path.normpath(os.path.join(_cwd, pjp)) if not os.path.isabs(pjp) else pjp
+                if os.path.isfile(abs_pjp):
+                    plotly_cache, plotly_fig, _ = media_utils.try_interactive_plot(
+                        _cwd, f"Saved: {pjp}", since=0,
+                    )
+                    if plotly_fig:
+                        break
+        if not plotly_fig:
+            plotly_cache, plotly_fig, plotly_html_path = media_utils.try_interactive_plot(_cwd, full_response, since=request_start_time)
         if plotly_fig:
-            st.plotly_chart(plotly_fig, use_container_width=True, key=f"plotly_live_{conv_id}")
+            st.plotly_chart(plotly_fig, use_container_width=True, key=f"plotly_{int(time.time()*1000)}")
             full_response = media_utils.attach_plotly(full_response, plotly_cache)
         elif plotly_html_path:
             html_content = Path(plotly_html_path).read_text(encoding="utf-8", errors="ignore")

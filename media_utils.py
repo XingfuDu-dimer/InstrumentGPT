@@ -180,9 +180,9 @@ def _load_plotly_from_html(path: str):
         return None
 
 
-def try_interactive_plot(cwd: str, response_text: str):
+def try_interactive_plot(cwd: str, response_text: str, since: float = 0):
     """
-    Parse response for Plotly file paths (generic, repo-agnostic).
+    Find Plotly figures via response text paths OR newly created JSON files.
     Returns (cache_path, fig, html_path).
     - If fig: use st.plotly_chart(fig)
     - Elif html_path: embed HTML with st.components.v1.html() (fallback when parse fails)
@@ -195,6 +195,13 @@ def try_interactive_plot(cwd: str, response_text: str):
         candidates.append(m.group(1).strip())
     for m in _PLOTLY_PATH_RE.finditer(response_text):
         candidates.append(m.group(1).strip().strip("`"))
+
+    if since:
+        for p in glob.glob(os.path.join(cwd, "device", "*", "log", "*.json"), recursive=False):
+            if os.path.getmtime(p) > since:
+                rel = os.path.relpath(p, cwd)
+                if rel not in candidates:
+                    candidates.append(rel)
 
     for rel_path in candidates:
         if not rel_path or ".." in rel_path:

@@ -1,21 +1,21 @@
 # Instrument GPT
 
-**Instrument GPT** is the tool (this repo). Your **instrument repo** (or any project you work on) is the real working directory — that’s where the Cursor agent runs (reads files, runs commands, etc.).
+**Instrument GPT** is a ChatGPT-like web UI that wraps the Cursor Agent CLI. It lets you download instrument logs, analyze errors, plot PID/temperature data, and debug your codebase — all through natural conversation.
 
-This app gives you a ChatGPT-like UI to talk to the Cursor Agent CLI: per-user conversation history, streaming responses, and sidebar conversation management. The agent’s **working directory** should point at your instrument project, not at Instrument GPT.
+Your **instrument repo** (or any project you work on) is the real working directory — that's where the Cursor agent reads files, runs commands, etc. Instrument GPT itself is just the frontend; the agent's working directory should point at your project.
 
 ## Prerequisites
 
 1. **Cursor CLI** — install and authenticate:
 
-```powershell
-# Windows PowerShell
-irm 'https://cursor.com/install?win32=true' | iex
-```
-
 ```bash
 # macOS / Linux / WSL
 curl https://cursor.com/install -fsS | bash
+```
+
+```powershell
+# Windows PowerShell
+irm 'https://cursor.com/install?win32=true' | iex
 ```
 
 Then log in (once):
@@ -34,55 +34,63 @@ pip install -r requirements.txt
 
 ## Usage
 
-Set the **default working directory** to your **Instrument directory** (the real repo the agent should run in). Instrument GPT lives elsewhere; the agent’s cwd should be your project.
+Set the **default working directory** to your instrument repo path. Instrument GPT lives elsewhere; the agent's cwd should be your project.
 
-- **`INSTRUMENT_CWD`** — set this to your instrument (or target) repo path when you start the app. That becomes the default "Working Directory" in the app.
-- If unset or invalid, it falls back to the Instrument GPT app directory (only useful for trying the app; for real use, set your instrument path).
+```bash
+# Linux / macOS / WSL — replace with your real project path
+INSTRUMENT_CWD=/home/you/Instrument streamlit run app.py
+```
 
 ```powershell
-# Windows PowerShell — replace with your real project path
-$env:INSTRUMENT_CWD = "C:\Users\You\Desktop\YourProject"
+# Windows PowerShell
+$env:INSTRUMENT_CWD = "C:\Users\You\Desktop\Instrument"
 streamlit run app.py
 ```
 
-```bash
-# macOS / Linux / WSL — replace with your real project path
-INSTRUMENT_CWD=/home/you/YourProject streamlit run app.py
-```
+Open the URL shown (default `http://localhost:8501`). You can change **Working Directory**, model, mode, and MDC tag in the sidebar **Settings** at any time; settings persist per-IP across page refreshes.
 
-Then open the URL shown (default `http://localhost:8501`). You can change **Working Directory**, model, mode, and MDC tag in the sidebar **Settings** anytime.
+## Environment Variables
 
-### "Agent not found" in the app (but `agent` works in terminal)
+| Variable | Description |
+|----------|-------------|
+| `INSTRUMENT_CWD` | Default working directory for the Cursor agent (your instrument repo). Falls back to a hardcoded default if unset. |
+| `INSTRUMENT_AGENT_PATH` | Full path to the `agent` executable. Useful when Streamlit's PATH doesn't include it (e.g. started from an IDE). |
+| `INSTRUMENT_DEBUG_NDJSON` | Set to `1` to write raw NDJSON lines to `data/debug_ndjson/` for protocol analysis. |
 
-If you already ran `agent login` in a terminal and `agent` works there, the app may not see it because Streamlit was started with a different PATH (e.g. from VS Code or another terminal). Set the **full path** to the agent executable:
+### "Agent not found" in the app
 
-1. In a terminal where `agent` works, get its path:
-   - **PowerShell:** `(Get-Command agent).Source`
-   - **CMD:** `where agent`
-2. Before starting Streamlit, set it (same session):
-   - **PowerShell:** `$env:INSTRUMENT_AGENT_PATH = "C:\path\to\agent.exe"`
-   - **Bash:** `export INSTRUMENT_AGENT_PATH=/path/to/agent`
-3. Run `streamlit run app.py` in that same terminal.
+If `agent` works in your terminal but the app can't find it, Streamlit was likely started with a different PATH. Fix:
 
-The app also looks for `agent.exe` in `%USERPROFILE%\.cursor\bin` and under `%LOCALAPPDATA%` on Windows; if your install is there, it may be found without the env var.
+1. Find the path: `which agent` (Linux/macOS) or `(Get-Command agent).Source` (PowerShell)
+2. Export it: `export INSTRUMENT_AGENT_PATH=/path/to/agent`
+3. Start Streamlit in that same terminal.
 
 ## Features
 
-- **Streaming responses** — text streams in via `agent -p --output-format stream-json`
-- **Per-IP conversation history** — SQLite-backed; each client gets isolated conversations
-- **Conversation list** — sidebar shows all conversations; click to switch, **×** to delete
-- **Session resume** — follow-up messages in a conversation use `--resume` for CLI context
-- **Configurable** — model, mode (agent/ask/plan), MDC tag, working directory in sidebar Settings
+- **Streaming responses** — real-time text streaming via `agent -p --output-format stream-json`
+- **Per-IP conversation history** — SQLite-backed; each client IP gets isolated conversations
+- **Conversation list** — sidebar shows all conversations; click to switch, **x** to delete
+- **Session resume** — follow-up messages use `--resume` so the agent retains CLI context
+- **Structured memory** — three-tier memory system keeps token usage roughly constant regardless of conversation length (diagnostic state + rolling summary + recent turns)
+- **Knowledge base** — save any assistant answer with the save button; a background worker summarizes it into a Markdown file under `liked_answers/`
+- **Share links** — click the link button on any answer to copy a shareable URL (`?conv=...&msg=...`) that renders the conversation up to that point
+- **Interactive charts** — Plotly JSON/HTML files generated by the agent are rendered as interactive charts with zoom, pan, and hover
+- **File display** — the agent can call `show_file.py` to render log/JSON files directly in the chat
+- **Configurable** — model, mode (agent/ask/plan), MDC tag, and working directory in sidebar Settings
 
-## Project structure
+## Project Structure
 
 | Path | Description |
 |------|-------------|
-| `app.py` | Streamlit UI (sidebar + chat) |
-| `cursor_cli.py` | Cursor CLI wrapper, NDJSON stream parsing |
-| `db.py` | SQLite schema and access for conversations & messages |
+| `app.py` | Streamlit UI — sidebar, chat, streaming, chart/image rendering |
+| `cursor_cli.py` | Cursor CLI wrapper — process management and NDJSON stream parsing |
+| `db.py` | SQLite schema and CRUD for conversations, messages, liked entries, and user settings |
+| `memory.py` | Structured conversation memory — DiagnosticState, rolling summary, content filtering |
+| `prompt_utils.py` | Prompt enrichment — device IP extraction, MDC tag injection, auto-titling |
+| `knowledge.py` | Knowledge base — background summarization of saved answers |
+| `media_utils.py` | Rendering utilities — Plotly charts, images, file display, code blocks with copy |
+| `ui_styles.py` | CSS for sidebar, main area, welcome card, and action buttons |
+| `MEMORY_ARCHITECTURE.md` | Design document for the three-tier memory system |
 | `requirements.txt` | Python dependencies |
-| `data/` | Auto-created; contains `conversations.db` |
-
-$env:INSTRUMENT_DEBUG_NDJSON = "1"
-streamlit run app.py
+| `data/` | Auto-created — `conversations.db`, `plotly_cache/`, `debug_ndjson/` |
+| `liked_answers/` | Auto-created — saved knowledge base Markdown files |
