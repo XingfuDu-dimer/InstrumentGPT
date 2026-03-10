@@ -279,6 +279,16 @@ def lang_for_file(name: str) -> str:
     return "text"
 
 
+def _is_config_file(path: str) -> bool:
+    """True if path is a device config/SystemHealth JSON (often long, collapse by default)."""
+    p = path.replace("\\", "/").lower()
+    name = os.path.basename(path).lower()
+    return (
+        "/config/" in p or "/systemhealth/" in p
+        or name in ("instrumentparameters.json", "systemhealthparameters.json", "networksettings.json")
+    )
+
+
 def _render_files(paths: list[str]) -> None:
     """Render arbitrary files (JSON or text) in expandable sections."""
     for path in paths:
@@ -287,7 +297,8 @@ def _render_files(paths: list[str]) -> None:
         try:
             raw = Path(path).read_text(encoding="utf-8", errors="replace")
             name = os.path.basename(path)
-            with st.expander(f"📄 {name}", expanded=True):
+            expanded = not _is_config_file(path)
+            with st.expander(f"📄 {name}", expanded=expanded):
                 if path.lower().endswith(".json"):
                     try:
                         st.json(json.loads(raw))

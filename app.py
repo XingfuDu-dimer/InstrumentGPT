@@ -583,7 +583,8 @@ if prompt := st.chat_input("Ask anything…"):
                 try:
                     raw = Path(abs_path).read_text(encoding="utf-8", errors="ignore")
                     name = os.path.basename(abs_path)
-                    with st.expander(f"📄 {name}", expanded=True):
+                    is_config = media_utils._is_config_file(abs_path)
+                    with st.expander(f"📄 {name}", expanded=not is_config):
                         if abs_path.lower().endswith(".json"):
                             st.json(json.loads(raw))
                         else:
