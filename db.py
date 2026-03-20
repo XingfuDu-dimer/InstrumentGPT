@@ -56,6 +56,10 @@ def init_db():
                 )
             except sqlite3.OperationalError:
                 pass  # column already exists
+        try:
+            conn.execute("ALTER TABLE conversations ADD COLUMN summary_msg_count INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
 
         # Liked entries (knowledge base) — one per (conversation, answer)
         conn.executescript("""
@@ -277,26 +281,41 @@ def update_cli_session(conversation_id: str, cli_session_id: str):
         )
 
 
-def get_memory(conversation_id: str) -> tuple[str, str]:
-    """Return (summary, diagnostic_state_json) for a conversation."""
+def get_memory(conversation_id: str) -> tuple[str, str, int]:
+    """Return (summary, diagnostic_state_json, summary_msg_count) for a conversation."""
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT summary, diagnostic_state "
+            "SELECT summary, diagnostic_state, COALESCE(summary_msg_count, 0) AS summary_msg_count "
             "FROM conversations WHERE id = ?",
             (conversation_id,),
         ).fetchone()
     if not row:
-        return "", ""
-    return row["summary"] or "", row["diagnostic_state"] or ""
+        return "", "", 0
+    return (
+        row["summary"] or "",
+        row["diagnostic_state"] or "",
+        int(row["summary_msg_count"] or 0),
+    )
 
 
-def update_memory(conversation_id: str, summary: str, diagnostic_state: str):
-    """Persist updated summary and diagnostic state."""
+def update_memory(
+    conversation_id: str,
+    summary: str,
+    diagnostic_state: str,
+    summary_msg_count: int | None = None,
+):
+    """Persist updated summary, diagnostic state, and optionally summary_msg_count."""
     with get_conn() as conn:
-        conn.execute(
-            "UPDATE conversations SET summary = ?, diagnostic_state = ? WHERE id = ?",
-            (summary, diagnostic_state, conversation_id),
-        )
+        if summary_msg_count is not None:
+            conn.execute(
+                "UPDATE conversations SET summary = ?, diagnostic_state = ?, summary_msg_count = ? WHERE id = ?",
+                (summary, diagnostic_state, summary_msg_count, conversation_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE conversations SET summary = ?, diagnostic_state = ? WHERE id = ?",
+                (summary, diagnostic_state, conversation_id),
+            )
 
 
 def delete_conversation(conversation_id: str):

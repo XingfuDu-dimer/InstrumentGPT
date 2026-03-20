@@ -5,6 +5,7 @@ import os
 import re
 import time
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 
 import streamlit as st
@@ -190,6 +191,18 @@ def split_plotly(content: str) -> tuple[str, str | None]:
     return text, cache_path
 
 
+@lru_cache(maxsize=128)
+def _load_plotly_from_cache(path: str, mtime: float):
+    """Load Plotly figure from cache file. Cached by (path, mtime) to avoid re-parsing on rerun."""
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        import plotly.io as pio
+        return pio.from_json(Path(path).read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
 def split_plotly_html(content: str) -> tuple[str, str | None]:
     if _PLOTLY_HTML_MARKER not in content:
         return content, None
@@ -220,12 +233,9 @@ def render_message(content: str) -> None:
     if _PLOTLY_MARKER in content:
         _, cache_path = split_plotly(content)
         if cache_path and os.path.isfile(cache_path):
-            try:
-                import plotly.io as pio
-                fig = pio.from_json(Path(cache_path).read_text(encoding="utf-8"))
+            fig = _load_plotly_from_cache(cache_path, os.path.getmtime(cache_path))
+            if fig is not None:
                 st.plotly_chart(fig, use_container_width=True, key=f"plotly_{cache_path}")
-            except Exception:
-                pass
 
     if _PLOTLY_HTML_MARKER in content:
         _, html_path = split_plotly_html(content)

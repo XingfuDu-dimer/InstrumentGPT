@@ -33,8 +33,11 @@ MAX_RECENT_MSG_CHARS = 3000
 def filter_content(content: str) -> str:
     """Strip UI markers, raw log dumps, and oversized code blocks."""
     text = _MARKER_RE.sub("", content)
-    text = _LOG_LINE_BLOCK_RE.sub("\n[raw log omitted — see diagnostic_context]\n", text)
-    text = _LONG_CODE_RE.sub("```\n[large code block omitted]\n```", text)
+    # Fast path: skip expensive regexes when they cannot match
+    if content.count("\n") >= 5:
+        text = _LOG_LINE_BLOCK_RE.sub("\n[raw log omitted — see diagnostic_context]\n", text)
+    if len(text) >= 2500:  # _LONG_CODE_RE needs 2000+ chars inside ```...```
+        text = _LONG_CODE_RE.sub("```\n[large code block omitted]\n```", text)
     return text.strip()
 
 
@@ -215,21 +218,32 @@ def build_prompt(
     diagnostic_state: DiagnosticState,
     existing_summary: str,
     is_device_query: bool,
-) -> tuple[str, str]:
+    summary_msg_count: int = 0,
+) -> tuple[str, str, int]:
     """Assemble a structured prompt from memory layers.
 
-    Returns (prompt_text, updated_summary).
+    Returns (prompt_text, updated_summary, new_summary_msg_count).
+    Uses incremental summary: only compresses newly evicted turns, O(1) per turn.
     """
 
     # --- Partition into summary-zone and recent-zone ---
     recent_count = RECENT_TURN_COUNT * 2  # N exchanges = 2N messages
-    if len(all_messages) > recent_count:
+    total = len(all_messages)
+    if total > recent_count:
         older = all_messages[:-recent_count]
         recent = all_messages[-recent_count:]
-        updated_summary = build_summary("", older)
+        prev_older_count = max(0, summary_msg_count - recent_count)
+        # Only compress newly evicted turns (1–2 per exchange), not entire history
+        newly_evicted = older[prev_older_count:]
+        if newly_evicted:
+            updated_summary = build_summary(existing_summary, newly_evicted)
+        else:
+            updated_summary = existing_summary or ""
+        new_summary_msg_count = total
     else:
         recent = list(all_messages)
         updated_summary = existing_summary or ""
+        new_summary_msg_count = summary_msg_count
 
     # --- Assemble blocks ---
     blocks: list[str] = [current_question]
@@ -268,4 +282,4 @@ def build_prompt(
             f"<recent_conversation>\n{recent_block}\n</recent_conversation>"
         )
 
-    return "\n\n".join(blocks), updated_summary
+    return "\n\n".join(blocks), updated_summary, new_summary_msg_count

@@ -471,7 +471,7 @@ if prompt := st.chat_input("Ask anything…"):
     cli_session = conv_info.get("cli_session_id") if conv_info else None
 
     # Load memory and build structured context
-    existing_summary, state_json = db.get_memory(conv_id)
+    existing_summary, state_json, summary_msg_count = db.get_memory(conv_id)
     diag_state = memory.DiagnosticState.deserialize(state_json)
 
     _cwd = settings.get("cwd", "")
@@ -481,15 +481,17 @@ if prompt := st.chat_input("Ask anything…"):
         diag_state.device_name = f"zspr {ip_result[1]}"
 
     if messages:
-        enriched, updated_summary = memory.build_prompt(
+        enriched, updated_summary, new_summary_msg_count = memory.build_prompt(
             current_question=enriched,
             all_messages=messages,
             diagnostic_state=diag_state,
             existing_summary=existing_summary,
             is_device_query=prompt_utils.has_device(prompt),
+            summary_msg_count=summary_msg_count,
         )
     else:
         updated_summary = existing_summary
+        new_summary_msg_count = summary_msg_count
 
     # Debug: show the actual prompt sent to CLI
     with st.expander("Debug: actual prompt sent", expanded=False):
@@ -633,7 +635,8 @@ if prompt := st.chat_input("Ask anything…"):
         db.add_message(conv_id, "assistant", full_response)
 
     diag_state = memory.extract_state_updates(full_response, diag_state)
-    db.update_memory(conv_id, updated_summary, diag_state.serialize())
+    # +2: user message and assistant message we just added (build_prompt used pre-add messages)
+    db.update_memory(conv_id, updated_summary, diag_state.serialize(), new_summary_msg_count + 2)
 
     user_msgs = [m for m in db.get_messages(conv_id) if m["role"] == "user"]
     if len(user_msgs) == 1:
