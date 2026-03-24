@@ -38,6 +38,27 @@ def _open_debug_log():
     return open(log_path, "w", encoding="utf-8")
 
 
+def get_available_models() -> list[tuple[str, str]]:
+    """Run `agent models` and return [(model_id, display_name), ...]."""
+    agent = _find_agent_cmd()
+    try:
+        result = subprocess.run(
+            [agent, "models"],
+            capture_output=True, text=True, timeout=10,
+        )
+        pairs: list[tuple[str, str]] = []
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line or line.startswith("Available") or line.startswith("Tip:"):
+                continue
+            if " - " in line:
+                model_id, display = line.split(" - ", 1)
+                pairs.append((model_id.strip(), display.strip()))
+        return pairs
+    except Exception:
+        return []
+
+
 def _find_agent_cmd() -> str:
     # Explicit path wins (for when Streamlit's PATH doesn't include agent)
     explicit = os.environ.get("INSTRUMENT_AGENT_PATH")

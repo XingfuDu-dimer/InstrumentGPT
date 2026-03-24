@@ -1,0 +1,16 @@
+[Unit]
+Description=Instrument GPT (Streamlit)
+Documentation=file://{{REPO}}/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Optional: create {{REPO}}/.env with e.g. INSTRUMENT_CWD=/path/to/Instrument
+EnvironmentFile=-{{REPO}}/.env
+ExecStart=/usr/bin/bash {{REPO}}/scripts/run-streamlit-service.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

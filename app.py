@@ -39,7 +39,9 @@ if not DEFAULT_CWD or not Path(DEFAULT_CWD).exists():
     else:
         DEFAULT_CWD = str(Path.home() / "GPT" / "Instrument")
 
-DEFAULT_MODEL = "composer-1.5"
+DEFAULT_MODEL = "composer-2"
+# Older app versions defaulted to Opus; DB still has that string — migrate to current default.
+LEGACY_DEFAULT_MODELS = ("claude-4.6-opus-high-thinking",)
 DEFAULT_MODE = "agent"
 DEFAULT_MDC_TAG = "@log-download-and-debug.mdc"
 
@@ -132,9 +134,11 @@ if "settings" not in st.session_state:
     }
     saved = db.get_user_settings(client_ip)
     if saved:
-        st.session_state.settings = {
-            k: (saved.get(k) or defaults[k]) for k in defaults
-        }
+        merged = {k: (saved.get(k) or defaults[k]) for k in defaults}
+        if merged["model"] in LEGACY_DEFAULT_MODELS:
+            merged["model"] = DEFAULT_MODEL
+            db.save_user_settings(client_ip, merged)
+        st.session_state.settings = merged
     else:
         st.session_state.settings = dict(defaults)
 
@@ -281,11 +285,19 @@ In any conversation, type **"add this to usage example"** and the entire convers
 """)
 
     with st.expander("⚙  Settings"):
-        st.session_state.settings["model"] = st.text_input(
-            "Model",
-            value=st.session_state.settings["model"],
-            help="CLI model ID (e.g. composer-1.5, sonnet-4.6). Empty = Auto. Run `agent models` to list.",
-        )
+        if "_model_options" not in st.session_state:
+            pairs = cursor_cli.get_available_models()
+            if pairs:
+                st.session_state._model_options = pairs
+            else:
+                st.session_state._model_options = [(DEFAULT_MODEL, DEFAULT_MODEL)]
+
+        _model_ids = [mid for mid, _ in st.session_state._model_options]
+        _model_labels = [f"{display}  ({mid})" for mid, display in st.session_state._model_options]
+        _cur_model = st.session_state.settings["model"]
+        _model_idx = _model_ids.index(_cur_model) if _cur_model in _model_ids else 0
+        _sel = st.selectbox("Model", _model_labels, index=_model_idx)
+        st.session_state.settings["model"] = _model_ids[_model_labels.index(_sel)]
         st.session_state.settings["mode"] = st.selectbox(
             "Mode",
             ["agent", "ask", "plan"],
